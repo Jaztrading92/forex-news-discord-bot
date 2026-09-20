@@ -109,14 +109,24 @@ EXTRACT_JS = """
 async def scrape():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        page = await browser.new_page()
+        page = await browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width": 1366, "height": 900},
+        )
         await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
         try:
-            await page.wait_for_selector(".div-table-row .event-imp", timeout=20000)
+            await page.wait_for_selector(".div-table-row .event-imp", timeout=25000)
         except Exception:
             pass
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
         events = await page.evaluate(EXTRACT_JS)
+        if not events:
+            try:
+                await page.screenshot(path="debug.png", full_page=True)
+                Path("debug.html").write_text(await page.content(), encoding="utf-8")
+            except Exception as exc:
+                print(f"Impossible de sauvegarder le debug: {exc}", file=sys.stderr)
         await browser.close()
         return events
 
