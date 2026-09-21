@@ -338,11 +338,26 @@ class LanguageButton(discord.ui.Button):
             await interaction.followup.send(f"Erreur de traduction: {exc}", ephemeral=True)
 
 
+class TranslateLabelButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            emoji="🌐",
+            label="Traduire",
+            custom_id="translate_label",
+            disabled=True,
+            row=0,
+        )
+
+
 class LanguageView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        for code, flag, _name in LANGUAGES:
-            self.add_item(LanguageButton(code, flag))
+        self.add_item(TranslateLabelButton())
+        for index, (code, flag, _name) in enumerate(LANGUAGES):
+            button = LanguageButton(code, flag)
+            button.row = 1 + index // 5
+            self.add_item(button)
 
 
 intents = discord.Intents.default()
