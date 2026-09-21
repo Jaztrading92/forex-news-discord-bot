@@ -447,7 +447,10 @@ async def on_ready():
     bot.add_view(LanguageView())
     print(f"Connecte en tant que {bot.user}")
     if os.environ.get("SEND_DEMO") == "true":
-        await send_demo_message()
+        try:
+            await send_demo_message()
+        except Exception as exc:
+            print(f"Erreur envoi message de demonstration: {exc}", file=sys.stderr)
     bot.loop.create_task(scanning_loop())
 
 
