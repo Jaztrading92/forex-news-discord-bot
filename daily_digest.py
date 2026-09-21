@@ -150,6 +150,23 @@ async def main():
     events = await fetch_today_high_impact_events()
 
     if not events:
+        if force and os.environ.get("SEND_DEMO_IF_EMPTY") == "true":
+            demo_event = {
+                "time": "2:30pm",
+                "currency": "USD",
+                "title": "Non-Farm Payrolls",
+                "actual": "210K",
+                "forecast": "180K",
+                "previous": "175K",
+            }
+            payload = {
+                "content": f"📅 **Aucune annonce a fort impact aujourd'hui ({today_label}) — exemple de demonstration ci-dessous :**",
+                "embeds": [build_embed(demo_event, today_label)],
+            }
+            resp = requests.post(WEBHOOK_URL, json=payload, timeout=15)
+            resp.raise_for_status()
+            print("Aucune annonce reelle aujourd'hui — exemple de demonstration envoye.")
+            return
         print("Aucune annonce a fort impact aujourd'hui, rien a envoyer.")
         return
 
