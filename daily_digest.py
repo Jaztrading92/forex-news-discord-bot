@@ -1,9 +1,10 @@
+import asyncio
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
 URL = "https://www.forexfactory.com/calendar?day=today"
 WEBHOOK_URL = os.environ["FOREXFACTORY_WEBHOOK_URL"]
@@ -45,6 +46,31 @@ CURRENCY_INFO = {
     "NOK": {"flag": "🇳🇴", "pairs": ["USD/NOK", "EUR/NOK"], "indices": ["OBX"], "other": ["Petrole Brent"]},
 }
 
+EXTRACT_JS = """
+() => {
+  const rows = Array.from(document.querySelectorAll('tr.calendar__row[data-event-id]'));
+  return rows.map(row => {
+    const icon = row.querySelector('.calendar__impact .icon');
+    const impactClass = icon ? icon.className : '';
+    const timeEl = row.querySelector('.calendar__time');
+    const currencyEl = row.querySelector('.calendar__currency span');
+    const titleEl = row.querySelector('.calendar__event-title');
+    const actualEl = row.querySelector('.calendar__actual span');
+    const forecastEl = row.querySelector('.calendar__forecast span');
+    const previousEl = row.querySelector('.calendar__previous span');
+    return {
+      impactClass,
+      time: timeEl ? timeEl.textContent.trim() : '-',
+      currency: currencyEl ? currencyEl.textContent.trim() : '?',
+      title: titleEl ? titleEl.textContent.trim() : '?',
+      actual: actualEl ? actualEl.textContent.trim() : null,
+      forecast: forecastEl ? forecastEl.textContent.trim() : null,
+      previous: previousEl ? previousEl.textContent.trim() : null,
+    };
+  });
+}
+"""
+
 
 def apply_common_name(title):
     lower = title.lower()
@@ -54,34 +80,19 @@ def apply_common_name(title):
     return title
 
 
-def fetch_today_high_impact_events():
-    resp = requests.get(URL, headers={"User-Agent": UA}, timeout=20)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+async def fetch_today_high_impact_events():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
+        await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.wait_for_selector("tr.calendar__row[data-event-id]", timeout=20000)
+        except Exception:
+            pass
+        rows = await page.evaluate(EXTRACT_JS)
+        await browser.close()
 
-    events = []
-    for row in soup.select("tr.calendar__row[data-event-id]"):
-        icon = row.select_one(".calendar__impact .icon")
-        impact_class = icon.get("class", []) if icon else []
-        if "icon--ff-impact-red" not in impact_class:
-            continue
-
-        time_el = row.select_one(".calendar__time")
-        currency_el = row.select_one(".calendar__currency span")
-        title_el = row.select_one(".calendar__event-title")
-        actual_el = row.select_one(".calendar__actual span")
-        forecast_el = row.select_one(".calendar__forecast span")
-        previous_el = row.select_one(".calendar__previous span")
-
-        events.append({
-            "time": time_el.get_text(strip=True) if time_el else "-",
-            "currency": currency_el.get_text(strip=True) if currency_el else "?",
-            "title": title_el.get_text(strip=True) if title_el else "?",
-            "actual": actual_el.get_text(strip=True) if actual_el else None,
-            "forecast": forecast_el.get_text(strip=True) if forecast_el else None,
-            "previous": previous_el.get_text(strip=True) if previous_el else None,
-        })
-    return events
+    return [row for row in rows if "icon--ff-impact-red" in row["impactClass"]]
 
 
 def build_embed(event, today_label):
@@ -128,7 +139,7 @@ def send_digest(events, today_label):
         resp.raise_for_status()
 
 
-def main():
+async def main():
     now_paris = datetime.now(PARIS)
     force = os.environ.get("FORCE_SEND") == "true"
     if not force and now_paris.hour != 23:
@@ -136,7 +147,7 @@ def main():
         return
 
     today_label = now_paris.strftime("%A %d %B %Y")
-    events = fetch_today_high_impact_events()
+    events = await fetch_today_high_impact_events()
 
     if not events:
         print("Aucune annonce a fort impact aujourd'hui, rien a envoyer.")
@@ -147,4 +158,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
