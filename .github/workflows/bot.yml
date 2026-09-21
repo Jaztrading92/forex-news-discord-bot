@@ -17,6 +17,8 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 355
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +48,7 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
-        run: timeout 20400 python bot.py || true
+        run: timeout 20400 python -u bot.py || true
 
       - name: Commit updated state
         if: always()
