@@ -43,4 +43,5 @@ jobs:
         env:
           FOREXFACTORY_WEBHOOK_URL: ${{ secrets.FOREXFACTORY_WEBHOOK_URL }}
           FORCE_SEND: ${{ github.event.inputs.force_send }}
+          SEND_DEMO_IF_EMPTY: ${{ github.event.inputs.force_send }}
         run: python daily_digest.py
