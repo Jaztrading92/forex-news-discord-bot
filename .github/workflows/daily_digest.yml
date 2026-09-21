@@ -24,6 +24,21 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-digest.txt
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('requirements-digest.txt') }}
+
+      - name: Install Playwright Chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            python -m playwright install-deps chromium
+          else
+            python -m playwright install --with-deps chromium
+          fi
+
       - name: Run daily digest
         env:
           FOREXFACTORY_WEBHOOK_URL: ${{ secrets.FOREXFACTORY_WEBHOOK_URL }}
