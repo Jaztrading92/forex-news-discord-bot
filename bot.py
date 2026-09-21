@@ -424,10 +424,30 @@ async def scanning_loop():
     await bot.close()
 
 
+async def send_demo_message():
+    channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
+    demo_event = {
+        "id": "demoNFPUS",
+        "date": "September 21",
+        "time": "14:30",
+        "title": "US Non-Farm Payrolls",
+        "impact": "1",
+        "actual": "210K",
+        "forecast": "180K",
+        "previous": "175K",
+    }
+    embed = build_embed(demo_event, detect_country(demo_event["id"], demo_event["title"]))
+    embed.set_footer(text="Exemple de demonstration · Cliquez un drapeau pour traduire")
+    await channel.send(embed=embed, view=LanguageView())
+    print("Message de demonstration envoye.")
+
+
 @bot.event
 async def on_ready():
     bot.add_view(LanguageView())
     print(f"Connecte en tant que {bot.user}")
+    if os.environ.get("SEND_DEMO") == "true":
+        await send_demo_message()
     bot.loop.create_task(scanning_loop())
 
 
