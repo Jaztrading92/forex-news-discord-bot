@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,9 @@ UA = (
 
 RED_COLOR = 0xE0201B
 
+FR_DAYS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+FR_MONTHS = ["janv.", "fevr.", "mars", "avr.", "mai", "juin", "juil.", "aout", "sept.", "oct.", "nov.", "dec."]
+
 ACRONYM_MAP = {
     "non-farm payrolls": "NFP",
     "non farm payrolls": "NFP",
@@ -33,17 +37,17 @@ ACRONYM_MAP = {
 }
 
 CURRENCY_INFO = {
-    "USD": {"flag": "🇺🇸", "pairs": ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD"], "indices": ["S&P 500", "Nasdaq 100", "Dow Jones"], "other": ["Or (XAU/USD)", "Petrole WTI"]},
-    "EUR": {"flag": "🇪🇺", "pairs": ["EUR/USD", "EUR/GBP", "EUR/JPY"], "indices": ["DAX", "CAC 40", "Euro Stoxx 50"], "other": []},
-    "GBP": {"flag": "🇬🇧", "pairs": ["GBP/USD", "EUR/GBP", "GBP/JPY"], "indices": ["FTSE 100"], "other": []},
-    "JPY": {"flag": "🇯🇵", "pairs": ["USD/JPY", "EUR/JPY", "GBP/JPY"], "indices": ["Nikkei 225"], "other": []},
-    "CNY": {"flag": "🇨🇳", "pairs": ["USD/CNH", "AUD/USD"], "indices": ["Shanghai Composite", "Hang Seng", "ASX 200"], "other": ["Cuivre", "Minerai de fer"]},
-    "AUD": {"flag": "🇦🇺", "pairs": ["AUD/USD", "AUD/JPY", "AUD/NZD"], "indices": ["ASX 200"], "other": []},
-    "NZD": {"flag": "🇳🇿", "pairs": ["NZD/USD", "AUD/NZD"], "indices": ["NZX 50"], "other": []},
-    "CAD": {"flag": "🇨🇦", "pairs": ["USD/CAD", "CAD/JPY"], "indices": ["TSX"], "other": ["Petrole WTI"]},
-    "CHF": {"flag": "🇨🇭", "pairs": ["USD/CHF", "EUR/CHF"], "indices": ["SMI"], "other": []},
-    "SEK": {"flag": "🇸🇪", "pairs": ["USD/SEK", "EUR/SEK"], "indices": ["OMXS30"], "other": []},
-    "NOK": {"flag": "🇳🇴", "pairs": ["USD/NOK", "EUR/NOK"], "indices": ["OBX"], "other": ["Petrole Brent"]},
+    "USD": {"flag": "🇺🇸"},
+    "EUR": {"flag": "🇪🇺"},
+    "GBP": {"flag": "🇬🇧"},
+    "JPY": {"flag": "🇯🇵"},
+    "CNY": {"flag": "🇨🇳"},
+    "AUD": {"flag": "🇦🇺"},
+    "NZD": {"flag": "🇳🇿"},
+    "CAD": {"flag": "🇨🇦"},
+    "CHF": {"flag": "🇨🇭"},
+    "SEK": {"flag": "🇸🇪"},
+    "NOK": {"flag": "🇳🇴"},
 }
 
 EXTRACT_JS = """
@@ -80,6 +84,27 @@ def apply_common_name(title):
     return title
 
 
+def format_date_fr(dt):
+    return f"{FR_DAYS[dt.weekday()]} {dt.day} {FR_MONTHS[dt.month - 1]}"
+
+
+def format_time_24h(time_str):
+    if not time_str:
+        return "-"
+    lowered = time_str.strip().lower()
+    if lowered in ("all day", "tentative", "-"):
+        return "Toute la journee" if lowered == "all day" else time_str
+    match = re.match(r"(\d{1,2}):(\d{2})(am|pm)", lowered)
+    if not match:
+        return time_str
+    hour, minute, meridiem = int(match.group(1)), match.group(2), match.group(3)
+    if meridiem == "pm" and hour != 12:
+        hour += 12
+    if meridiem == "am" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute}"
+
+
 async def fetch_today_high_impact_events():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -95,48 +120,37 @@ async def fetch_today_high_impact_events():
     return [row for row in rows if "icon--ff-impact-red" in row["impactClass"]]
 
 
-def build_embed(event, today_label):
-    currency_info = CURRENCY_INFO.get(event["currency"])
-    flag = currency_info["flag"] if currency_info else "🌍"
-    display_title = apply_common_name(event["title"])
+def build_event_line(event, date_fr):
+    flag = CURRENCY_INFO.get(event["currency"], {}).get("flag", "🌍")
+    time_24h = format_time_24h(event["time"])
+    title = apply_common_name(event["title"])
+    line = f"{flag} **{date_fr}** · **{time_24h}** · **{event['currency']}** · {title}"
 
-    embed = {
-        "title": f"🔴 {flag} {display_title}",
-        "description": f"**Impact eleve** · Devise **{event['currency']}** · {today_label} a {event['time']}",
+    details = []
+    if event["actual"]:
+        details.append(f"Actuel **{event['actual']}**")
+    if event["forecast"]:
+        details.append(f"Prevision {event['forecast']}")
+    if event["previous"]:
+        details.append(f"Precedent {event['previous']}")
+    if details:
+        line += "\n> " + " · ".join(details)
+    return line
+
+
+def build_summary_embed(events, date_fr, title_suffix):
+    lines = [build_event_line(event, date_fr) for event in events]
+    description = "🕐 Fuseau horaire : Europe/Paris\n\n" + "\n\n".join(lines)
+    return {
+        "title": f"📅 ANNONCES ECONOMIQUES — {title_suffix}",
+        "description": description[:4096],
         "color": RED_COLOR,
-        "fields": [
-            {"name": "📌 Actuel", "value": event["actual"] or "-", "inline": True},
-            {"name": "🎯 Prevision", "value": event["forecast"] or "-", "inline": True},
-            {"name": "📜 Precedent", "value": event["previous"] or "-", "inline": True},
-        ],
     }
 
-    if currency_info:
-        lines = []
-        if currency_info["pairs"]:
-            lines.append("**Paires Forex :** " + ", ".join(currency_info["pairs"]))
-        if currency_info["indices"]:
-            lines.append("**Indices :** " + ", ".join(currency_info["indices"]))
-        if currency_info["other"]:
-            lines.append("**Autres :** " + ", ".join(currency_info["other"]))
-        embed["fields"].append({"name": "💱 Marches probablement concernes", "value": "\n".join(lines), "inline": False})
 
-    return embed
-
-
-def send_digest(events, today_label):
-    header = {
-        "content": f"📅 **Recapitulatif des annonces economiques a fort impact — {today_label}** ({len(events)} annonce{'s' if len(events) > 1 else ''})",
-        "embeds": [build_embed(event, today_label) for event in events[:10]],
-    }
-    resp = requests.post(WEBHOOK_URL, json=header, timeout=15)
+def send_embed(embed):
+    resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
     resp.raise_for_status()
-
-    remaining = events[10:]
-    while remaining:
-        batch, remaining = remaining[:10], remaining[10:]
-        resp = requests.post(WEBHOOK_URL, json={"embeds": [build_embed(e, today_label) for e in batch]}, timeout=15)
-        resp.raise_for_status()
 
 
 async def main():
@@ -146,7 +160,8 @@ async def main():
         print(f"Heure actuelle a Paris: {now_paris.isoformat()} — pas encore 23h, on ne fait rien.")
         return
 
-    today_label = now_paris.strftime("%A %d %B %Y")
+    date_fr = format_date_fr(now_paris)
+
     events = await fetch_today_high_impact_events()
 
     if not events:
@@ -159,18 +174,19 @@ async def main():
                 "forecast": "180K",
                 "previous": "175K",
             }
-            payload = {
-                "content": f"📅 **Aucune annonce a fort impact aujourd'hui ({today_label}) — exemple de demonstration ci-dessous :**",
-                "embeds": [build_embed(demo_event, today_label)],
-            }
-            resp = requests.post(WEBHOOK_URL, json=payload, timeout=15)
-            resp.raise_for_status()
+            embed = build_summary_embed([demo_event], date_fr, "AUJOURD'HUI (EXEMPLE)")
+            embed["description"] = (
+                "Aucune annonce a fort impact reelle aujourd'hui — voici un exemple de rendu :\n\n"
+                + embed["description"]
+            )
+            send_embed(embed)
             print("Aucune annonce reelle aujourd'hui — exemple de demonstration envoye.")
             return
         print("Aucune annonce a fort impact aujourd'hui, rien a envoyer.")
         return
 
-    send_digest(events, today_label)
+    embed = build_summary_embed(events, date_fr, "AUJOURD'HUI")
+    send_embed(embed)
     print(f"{len(events)} annonce(s) a fort impact envoyee(s).")
 
 
