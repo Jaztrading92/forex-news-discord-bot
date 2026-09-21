@@ -1,0 +1,31 @@
+name: Daily Economic Digest
+
+on:
+  schedule:
+    - cron: "0 21 * * *"
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: "Forcer l'envoi immediat (ignore la verification de l'heure)"
+        type: boolean
+        default: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-digest.txt
+
+      - name: Run daily digest
+        env:
+          FOREXFACTORY_WEBHOOK_URL: ${{ secrets.FOREXFACTORY_WEBHOOK_URL }}
+          FORCE_SEND: ${{ github.event.inputs.force_send }}
+        run: python daily_digest.py
