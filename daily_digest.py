@@ -130,7 +130,8 @@ def send_digest(events, today_label):
 
 def main():
     now_paris = datetime.now(PARIS)
-    if now_paris.hour != 23:
+    force = os.environ.get("FORCE_SEND") == "true"
+    if not force and now_paris.hour != 23:
         print(f"Heure actuelle a Paris: {now_paris.isoformat()} — pas encore 23h, on ne fait rien.")
         return
 
