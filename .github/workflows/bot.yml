@@ -3,7 +3,12 @@ name: FinancialJuice Discord Bot
 on:
   schedule:
     - cron: "0 */6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      send_demo:
+        description: "Envoyer un message d'exemple au demarrage"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -48,6 +53,7 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          SEND_DEMO: ${{ github.event.inputs.send_demo }}
         run: timeout 20400 python -u bot.py || true
 
       - name: Commit updated state
