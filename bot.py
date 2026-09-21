@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
-import requests
 from playwright.async_api import async_playwright
 
 URL = "https://www.financialjuice.com/"
@@ -90,38 +89,6 @@ ACRONYM_MAP = {
 HASH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SUFFIX_RE = re.compile(r"([A-Z]{2})$")
 
-LANGUAGES = [
-    ("en", "🇬🇧", "English"),
-    ("fr", "🇫🇷", "Français"),
-    ("es", "🇪🇸", "Español"),
-    ("ar", "🇸🇦", "العربية"),
-    ("zh", "🇨🇳", "中文"),
-    ("hi", "🇮🇳", "हिन्दी"),
-    ("pt", "🇵🇹", "Português"),
-    ("ru", "🇷🇺", "Русский"),
-    ("de", "🇩🇪", "Deutsch"),
-    ("ja", "🇯🇵", "日本語"),
-]
-
-UI_STRINGS = {
-    "impact_high": {"en": "High impact", "fr": "Impact eleve", "es": "Impacto alto", "ar": "تأثير مرتفع", "zh": "高影响", "hi": "उच्च प्रभाव", "pt": "Impacto alto", "ru": "Высокое влияние", "de": "Hohe Auswirkung", "ja": "高インパクト"},
-    "impact_medium": {"en": "Medium impact", "fr": "Impact moyen", "es": "Impacto medio", "ar": "تأثير متوسط", "zh": "中等影响", "hi": "मध्यम प्रभाव", "pt": "Impacto medio", "ru": "Среднее влияние", "de": "Mittlere Auswirkung", "ja": "中程度のインパクト"},
-    "actual": {"en": "Actual", "fr": "Actuel", "es": "Actual", "ar": "الفعلي", "zh": "实际值", "hi": "वास्तविक", "pt": "Atual", "ru": "Фактический", "de": "Tatsaechlich", "ja": "実際値"},
-    "forecast": {"en": "Forecast", "fr": "Prevision", "es": "Prevision", "ar": "التوقعات", "zh": "预测值", "hi": "पूर्वानुमान", "pt": "Previsao", "ru": "Прогноз", "de": "Prognose", "ja": "予測値"},
-    "previous": {"en": "Previous", "fr": "Precedent", "es": "Anterior", "ar": "السابق", "zh": "前值", "hi": "पिछला", "pt": "Anterior", "ru": "Предыдущий", "de": "Vorherig", "ja": "前回値"},
-    "result": {"en": "Result", "fr": "Resultat", "es": "Resultado", "ar": "النتيجة", "zh": "结果", "hi": "परिणाम", "pt": "Resultado", "ru": "Результат", "de": "Ergebnis", "ja": "結果"},
-    "above": {"en": "Above forecast", "fr": "Superieur a la prevision", "es": "Por encima de lo previsto", "ar": "أعلى من المتوقع", "zh": "高于预期", "hi": "पूर्वानुमान से अधिक", "pt": "Acima da previsao", "ru": "Выше прогноза", "de": "Ueber der Prognose", "ja": "予測を上回る"},
-    "below": {"en": "Below forecast", "fr": "Inferieur a la prevision", "es": "Por debajo de lo previsto", "ar": "أقل من المتوقع", "zh": "低于预期", "hi": "पूर्वानुमान से कम", "pt": "Abaixo da previsao", "ru": "Ниже прогноза", "de": "Unter der Prognose", "ja": "予測を下回る"},
-    "inline": {"en": "In line with forecast", "fr": "Conforme a la prevision", "es": "En linea con lo previsto", "ar": "متوافق مع التوقعات", "zh": "符合预期", "hi": "पूर्वानुमान के अनुरूप", "pt": "Em linha com a previsao", "ru": "Соответствует прогнозу", "de": "Im Rahmen der Prognose", "ja": "予測通り"},
-    "na": {"en": "Not comparable", "fr": "Non comparable", "es": "No comparable", "ar": "غير قابل للمقارنة", "zh": "无法比较", "hi": "तुलनीय नहीं", "pt": "Nao comparavel", "ru": "Не сравнимо", "de": "Nicht vergleichbar", "ja": "比較不可"},
-    "markets": {"en": "Markets likely affected", "fr": "Marches probablement concernes", "es": "Mercados probablemente afectados", "ar": "الأسواق المتأثرة على الأرجح", "zh": "可能受影响的市场", "hi": "संभावित प्रभावित बाज़ार", "pt": "Mercados provavelmente afetados", "ru": "Вероятно затронутые рынки", "de": "Wahrscheinlich betroffene Maerkte", "ja": "影響を受ける可能性のある市場"},
-    "pairs": {"en": "Forex pairs", "fr": "Paires Forex", "es": "Pares de Forex", "ar": "أزواج الفوركس", "zh": "外汇货币对", "hi": "फॉरेक्स जोड़े", "pt": "Pares de Forex", "ru": "Валютные пары", "de": "Forex-Paare", "ja": "為替ペア"},
-    "indices": {"en": "Indices", "fr": "Indices", "es": "Indices", "ar": "المؤشرات", "zh": "指数", "hi": "सूचकांक", "pt": "Indices", "ru": "Индексы", "de": "Indizes", "ja": "指数"},
-    "other": {"en": "Other", "fr": "Autres", "es": "Otros", "ar": "أخرى", "zh": "其他", "hi": "अन्य", "pt": "Outros", "ru": "Другое", "de": "Sonstiges", "ja": "その他"},
-    "currency": {"en": "Currency", "fr": "Devise", "es": "Divisa", "ar": "العملة", "zh": "货币", "hi": "मुद्रा", "pt": "Moeda", "ru": "Валюта", "de": "Waehrung", "ja": "通貨"},
-    "translated_via": {"en": "Automatic translation", "fr": "Traduction automatique", "es": "Traduccion automatica", "ar": "ترجمة تلقائية", "zh": "自动翻译", "hi": "स्वचालित अनुवाद", "pt": "Traducao automatica", "ru": "Автоматический перевод", "de": "Automatische Uebersetzung", "ja": "自動翻訳"},
-}
-
 EXTRACT_JS = """
 () => {
   const rows = Array.from(document.querySelectorAll('.div-table-row'));
@@ -201,12 +168,12 @@ def parse_num(value):
 def compare_actual(actual, forecast):
     a, f = parse_num(actual), parse_num(forecast)
     if a is None or f is None:
-        return "➡️", "na"
+        return "➡️", "Non comparable a la prevision"
     if a > f:
-        return "🔼", "above"
+        return "🔼", "Superieur a la prevision"
     if a < f:
-        return "🔽", "below"
-    return "➡️", "inline"
+        return "🔽", "Inferieur a la prevision"
+    return "➡️", "Conforme a la prevision"
 
 
 def load_state():
@@ -229,7 +196,7 @@ def build_embed(event, country):
     market_info = MARKETS.get(country)
     flag = market_info["flag"] if market_info else "🌍"
     currency = market_info["currency"] if market_info else "?"
-    cmp_icon, cmp_key = compare_actual(event["actual"], event["forecast"])
+    cmp_icon, cmp_label = compare_actual(event["actual"], event["forecast"])
     display_title = apply_common_name(event["title"])
     impact_label = "Impact eleve" if event["impact"] == "1" else "Impact moyen"
 
@@ -242,7 +209,7 @@ def build_embed(event, country):
     embed.add_field(name="📌 Actuel", value=event["actual"] or "-", inline=True)
     embed.add_field(name="🎯 Prevision", value=event["forecast"] or "-", inline=True)
     embed.add_field(name="📜 Precedent", value=event["previous"] or "-", inline=True)
-    embed.add_field(name="📊 Resultat", value=f"{cmp_icon} {UI_STRINGS[cmp_key]['fr']}", inline=False)
+    embed.add_field(name="📊 Resultat", value=f"{cmp_icon} {cmp_label}", inline=False)
 
     if market_info:
         lines = []
@@ -254,110 +221,8 @@ def build_embed(event, country):
             lines.append("**Autres :** " + ", ".join(market_info["other"]))
         embed.add_field(name="💱 Marches probablement concernes", value="\n".join(lines), inline=False)
 
-    embed.set_footer(text="Source : FinancialJuice · Cliquez un drapeau pour traduire")
+    embed.set_footer(text="Source : FinancialJuice")
     return embed
-
-
-async def translate_text(text, target_lang):
-    if target_lang == "en" or not text:
-        return text
-    try:
-        loop = asyncio.get_event_loop()
-
-        def _call():
-            resp = requests.get(
-                "https://api.mymemory.translated.net/get",
-                params={"q": text, "langpair": f"en|{target_lang}"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["responseData"]["translatedText"]
-
-        return await loop.run_in_executor(None, _call)
-    except Exception:
-        return text
-
-
-async def build_translated_embed(source_embed, lang_code):
-    lang_flag = next(f for c, f, n in LANGUAGES if c == lang_code)
-    icon, flag_orig, original_title = source_embed.title.split(" ", 2)
-    strings = {key: values[lang_code] for key, values in UI_STRINGS.items()}
-
-    translated_title = await translate_text(original_title, lang_code)
-
-    is_high = source_embed.color is not None and source_embed.color.value == IMPACT_LABELS["1"]["color"]
-    impact_label = strings["impact_high"] if is_high else strings["impact_medium"]
-
-    currency_match = re.search(r"\*\*([A-Z]{3})\*\*", source_embed.description or "")
-    currency = currency_match.group(1) if currency_match else "?"
-
-    fields_by_name = {f.name: f.value for f in source_embed.fields}
-    actual = next((v for k, v in fields_by_name.items() if "Actuel" in k), "-")
-    forecast = next((v for k, v in fields_by_name.items() if "Prevision" in k), "-")
-    previous = next((v for k, v in fields_by_name.items() if "Precedent" in k), "-")
-    result_raw = next((v for k, v in fields_by_name.items() if "Resultat" in k), "")
-    markets_field = next((v for k, v in fields_by_name.items() if "Marches" in k), None)
-
-    if "🔼" in result_raw:
-        result_label = f"🔼 {strings['above']}"
-    elif "🔽" in result_raw:
-        result_label = f"🔽 {strings['below']}"
-    elif "➡️" in result_raw:
-        result_label = f"➡️ {strings['inline']}"
-    else:
-        result_label = result_raw
-
-    translated = discord.Embed(
-        title=f"{icon} {flag_orig} {translated_title}",
-        description=f"**{impact_label}** · {strings['currency']} **{currency}**",
-        color=source_embed.color,
-    )
-    translated.add_field(name=f"📌 {strings['actual']}", value=actual, inline=True)
-    translated.add_field(name=f"🎯 {strings['forecast']}", value=forecast, inline=True)
-    translated.add_field(name=f"📜 {strings['previous']}", value=previous, inline=True)
-    translated.add_field(name=f"📊 {strings['result']}", value=result_label, inline=False)
-    if markets_field:
-        translated.add_field(name=f"💱 {strings['markets']}", value=markets_field, inline=False)
-    translated.set_footer(text=f"{lang_flag} {strings['translated_via']}")
-    return translated
-
-
-class LanguageButton(discord.ui.Button):
-    def __init__(self, code, flag):
-        super().__init__(style=discord.ButtonStyle.secondary, emoji=flag, custom_id=f"lang:{code}")
-        self.code = code
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            source_embed = interaction.message.embeds[0]
-            translated = await build_translated_embed(source_embed, self.code)
-            await interaction.followup.send(embed=translated, ephemeral=True)
-        except Exception as exc:
-            await interaction.followup.send(f"Erreur de traduction: {exc}", ephemeral=True)
-
-
-class TranslateLabelButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(
-            style=discord.ButtonStyle.secondary,
-            emoji="🌐",
-            label="Traduire",
-            custom_id="translate_label",
-            disabled=True,
-            row=0,
-        )
-
-
-class LanguageView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(TranslateLabelButton())
-        for index, (code, flag, _name) in enumerate(LANGUAGES):
-            button = LanguageButton(code, flag)
-            button.row = 1 + index // 5
-            self.add_item(button)
 
 
 intents = discord.Intents.default()
@@ -410,7 +275,7 @@ async def scanning_loop():
 
                 country = detect_country(event["id"], event["title"])
                 embed = build_embed(event, country)
-                await channel.send(embed=embed, view=LanguageView())
+                await channel.send(embed=embed)
                 print(f"Envoye: {event['title']} ({event['actual']})")
         except Exception as exc:
             print(f"Erreur boucle de scan: {exc}", file=sys.stderr)
@@ -452,14 +317,13 @@ async def send_demo_message():
         "previous": "175K",
     }
     embed = build_embed(demo_event, detect_country(demo_event["id"], demo_event["title"]))
-    embed.set_footer(text="Exemple de demonstration · Cliquez un drapeau pour traduire")
-    await channel.send(embed=embed, view=LanguageView())
+    embed.set_footer(text="Exemple de demonstration")
+    await channel.send(embed=embed)
     print("Message de demonstration envoye.")
 
 
 @bot.event
 async def on_ready():
-    bot.add_view(LanguageView())
     print(f"Connecte en tant que {bot.user}")
     if os.environ.get("SEND_DEMO") == "true":
         try:
