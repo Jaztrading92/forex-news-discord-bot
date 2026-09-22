@@ -145,13 +145,13 @@ def save_state(state):
         state = dict(list(state.items())[-2000:])
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def _impact_title(headline):
+def _impact_badge(headline):
     if headline["critical"]:
-        return "🆘 Alerte critique : impact majeur attendu sur les marches"
+        return "🆘 Alerte Critique"
     elif headline["active"]:
-        return "⚠️ Il est necessaire de connaitre le risque de marche"
+        return "🔴 Alerte Marche"
     else:
-        return "ℹ️ Actualite a suivre sur les marches"
+        return "🔵 Actualite"
 
 def _impact_color(headline):
     if headline["critical"] or headline["active"]:
@@ -160,6 +160,7 @@ def _impact_color(headline):
 
 async def build_embed(headline):
     countries = detect_countries(headline["labels"])
+    flags = " ".join(dict.fromkeys(MARKETS[c]["flag"] for c in countries if c in MARKETS)) or "🌍"
 
     title_fr = await translate_to_fr(headline["title"])
 
@@ -172,20 +173,18 @@ async def build_embed(headline):
         indices.update(info.get("indices", []))
         other.update(info.get("other", []))
 
-    impact_groups = []
-    if pairs:
-        impact_groups.append(", ".join(sorted(pairs)))
-    if indices:
-        impact_groups.append(", ".join(sorted(indices)))
-    if other:
-        impact_groups.append(", ".join(sorted(other)))
+    assets = sorted(pairs) + sorted(indices) + sorted(other)
 
-    description = title_fr
-    if impact_groups:
-        description += "\n\n**Marches et actifs potentiellement concernes :** " + " · ".join(impact_groups) + "."
+    description = f"**{title_fr}**"
+    if assets:
+        shown = assets[:8]
+        assets_line = " · ".join(shown)
+        if len(assets) > 8:
+            assets_line += " …"
+        description += f"\n\n💹 **Actifs impactes :** {assets_line}"
 
     embed = discord.Embed(
-        title=_impact_title(headline),
+        title=f"{flags}  {_impact_badge(headline)}",
         description=description[:4096],
         color=_impact_color(headline),
         timestamp=datetime.now(timezone.utc),
@@ -215,7 +214,7 @@ async def scanning_loop():
 
     start_time = time.monotonic()
     tick = 0
-    print("Boucle de scan demarree (actualites, SANS FILTRAGE - mode test).")
+    print("Boucle de scan demarree (actualites FinancialJuice, SANS FILTRAGE - mode test).")
 
     while time.monotonic() - start_time < MAX_RUNTIME_SECONDS:
         tick += 1
