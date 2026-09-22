@@ -81,7 +81,7 @@ jobs:
           done
 
       - name: Trigger next run
-        if: false
+        if: always()
         run: |
           curl -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
