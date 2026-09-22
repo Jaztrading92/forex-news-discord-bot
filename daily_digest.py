@@ -111,12 +111,20 @@ async def fetch_today_high_impact_events():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
-        await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+        response = await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+        print(f"DEBUG: goto status = {response.status if response else 'no response'}")
         try:
             await page.wait_for_selector("tr.calendar__row[data-event-id]", timeout=20000)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"DEBUG: wait_for_selector failed: {exc}")
         rows = await page.evaluate(EXTRACT_JS)
+        print(f"DEBUG: total rows found = {len(rows)}")
+        impact_counts = {}
+        for row in rows:
+            impact_counts[row["impactClass"]] = impact_counts.get(row["impactClass"], 0) + 1
+        print(f"DEBUG: impact class counts = {impact_counts}")
+        red_titles = [r["title"] for r in rows if "icon--ff-impact-red" in r["impactClass"]]
+        print(f"DEBUG: red event titles = {red_titles}")
         await browser.close()
 
     return [row for row in rows if "icon--ff-impact-red" in row["impactClass"]]
