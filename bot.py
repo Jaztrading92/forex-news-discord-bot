@@ -25,10 +25,14 @@ UA = (
 )
 
 # imp-1 = rouge (impact eleve), imp-2 = orange (impact moyen)
-WATCHED_IMPACTS = {"1", "2"}
+# MODE TEST TEMPORAIRE : tous les niveaux d'impact sont surveilles (aucun filtrage)
+# pour verifier que le bot detecte bien tout. Remettre a {"1", "2"} une fois confirme.
+WATCHED_IMPACTS = {"1", "2", "3", "4"}
 IMPACT_LABELS = {
-    "1": {"icon": "🔴", "color": 0xE0201B},
-    "2": {"icon": "🟠", "color": 0xF0A500},
+    "1": {"icon": "🔴", "color": 0xE0201B, "label": "Impact eleve"},
+    "2": {"icon": "🟠", "color": 0xF0A500, "label": "Impact moyen"},
+    "3": {"icon": "🟡", "color": 0xF7CE0C, "label": "Impact faible"},
+    "4": {"icon": "🔵", "color": 0x51C6E1, "label": "Info / Discours"},
 }
 
 MARKETS = {
@@ -198,7 +202,7 @@ def build_embed(event, country):
     currency = market_info["currency"] if market_info else "?"
     cmp_icon, cmp_label = compare_actual(event["actual"], event["forecast"])
     display_title = apply_common_name(event["title"])
-    impact_label = "Impact eleve" if event["impact"] == "1" else "Impact moyen"
+    impact_label = impact_info["label"]
 
     embed = discord.Embed(
         title=f"{impact_info['icon']} {flag} {display_title}",
