@@ -173,15 +173,22 @@ async def build_embed(headline):
         indices.update(info.get("indices", []))
         other.update(info.get("other", []))
 
-    assets = sorted(pairs) + sorted(indices) + sorted(other)
+    assets = sorted(pairs) + sorted(other)
+    markets = sorted(indices)
 
     description = f"**{title_fr}**"
     if assets:
-        shown = assets[:8]
+        shown = assets[:6]
         assets_line = " · ".join(shown)
-        if len(assets) > 8:
+        if len(assets) > 6:
             assets_line += " …"
         description += f"\n\n💹 **Actifs impactes :** {assets_line}"
+    if markets:
+        shown = markets[:6]
+        markets_line = " · ".join(shown)
+        if len(markets) > 6:
+            markets_line += " …"
+        description += f"\n📊 **Marches impactes :** {markets_line}"
 
     embed = discord.Embed(
         title=f"{flags}  {_impact_badge(headline)}",
