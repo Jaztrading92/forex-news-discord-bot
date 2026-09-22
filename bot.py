@@ -16,7 +16,7 @@ BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["DISCORD_CHANNEL_ID"])
 
 POLL_INTERVAL_SECONDS = 20
-RELOAD_EVERY_N_TICKS = 90  # ~30 min entre deux rechargements complets de la page
+RELOAD_EVERY_N_TICKS = 15  # ~5 min entre deux rechargements complets de la page (evite un flux temps reel fige)
 MAX_RUNTIME_SECONDS = 5 * 3600 + 30 * 60  # 5h30 puis arret propre pour relance par le workflow
 
 UA = (
@@ -229,8 +229,12 @@ async def scanning_loop():
             if tick % RELOAD_EVERY_N_TICKS == 0:
                 await page.reload(wait_until="domcontentloaded", timeout=45000)
                 await safe_wait_ready(page)
+                print("Page rechargee (rafraichissement periodique).")
 
             headlines = await page.evaluate(EXTRACT_JS)
+            if tick % 15 == 0:
+                newest = headlines[0]["time"] if headlines else "?"
+                print(f"Battement: {len(headlines)} actualites visibles, plus recente a {newest}.")
             for headline in headlines:
                 if not headline["id"] or not headline["title"]:
                     continue
