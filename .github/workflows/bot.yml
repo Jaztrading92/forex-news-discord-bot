@@ -7,6 +7,10 @@ on:
         description: "Envoyer un message d'exemple au demarrage"
         type: boolean
         default: false
+      clean_channel:
+        description: "Nettoyer le salon (supprime tous les messages) puis relancer normalement"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,6 +56,7 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           SEND_DEMO: ${{ github.event.inputs.send_demo }}
+          CLEAN_CHANNEL: ${{ github.event.inputs.clean_channel }}
         run: timeout 20400 python -u bot.py || true
 
       - name: Commit updated state
