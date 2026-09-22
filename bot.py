@@ -24,6 +24,7 @@ UA = (
 )
 
 RED_COLOR = 0xB80101
+GREY_COLOR = 0x6C7A89
 
 MARKETS = {
     "US": {"flag": "🇺🇸", "pairs": ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD"], "indices": ["S&P 500", "Nasdaq 100", "Dow Jones"], "other": ["Or (XAU/USD)", "Petrole WTI"]},
@@ -100,7 +101,6 @@ EXTRACT_JS = """
 }
 """
 
-
 def detect_countries(labels):
     countries = []
     for label in labels:
@@ -108,7 +108,6 @@ def detect_countries(labels):
         if code and code not in countries:
             countries.append(code)
     return countries
-
 
 def load_state():
     if STATE_FILE.exists():
@@ -118,24 +117,26 @@ def load_state():
             return {}
     return {}
 
-
 def save_state(state):
     if len(state) > 4000:
         state = dict(list(state.items())[-2000:])
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-
 def build_embed(headline):
     countries = detect_countries(headline["labels"])
     flags = " ".join(MARKETS[c]["flag"] for c in countries if c in MARKETS) or "🌍"
-    is_critical = headline["critical"]
-    level_label = "Actualite critique" if is_critical else "Actualite importante"
-    icon = "🆘" if is_critical else "🔴"
+
+    if headline["critical"]:
+        level_label, icon, color = "Actualite critique", "🆘", RED_COLOR
+    elif headline["active"]:
+        level_label, icon, color = "Actualite importante", "🔴", RED_COLOR
+    else:
+        level_label, icon, color = "Actualite (non filtree - test)", "⚪", GREY_COLOR
 
     embed = discord.Embed(
         title=headline["title"][:256] or "(sans titre)",
         description=f"{icon} **{level_label}** {flags}",
-        color=RED_COLOR,
+        color=color,
         timestamp=datetime.now(timezone.utc),
     )
     if headline["link"]:
@@ -166,10 +167,8 @@ def build_embed(headline):
     embed.set_footer(text=f"Source : FinancialJuice · {headline['time']}")
     return embed
 
-
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
-
 
 async def safe_wait_ready(page):
     try:
@@ -177,7 +176,6 @@ async def safe_wait_ready(page):
     except Exception:
         pass
     await page.wait_for_timeout(4000)
-
 
 async def scanning_loop():
     await bot.wait_until_ready()
@@ -192,7 +190,7 @@ async def scanning_loop():
 
     start_time = time.monotonic()
     tick = 0
-    print("Boucle de scan demarree (actualites FinancialJuice).")
+    print("Boucle de scan demarree (actualites FinancialJuice, SANS FILTRAGE - mode test).")
 
     while time.monotonic() - start_time < MAX_RUNTIME_SECONDS:
         tick += 1
@@ -203,8 +201,6 @@ async def scanning_loop():
 
             headlines = await page.evaluate(EXTRACT_JS)
             for headline in headlines:
-                if not (headline["active"] or headline["critical"]):
-                    continue
                 if not headline["id"] or not headline["title"]:
                     continue
 
@@ -244,7 +240,6 @@ async def scanning_loop():
     print("Duree maximale atteinte, arret propre pour relance par le workflow.")
     await bot.close()
 
-
 async def send_demo_message():
     channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
     demo_headline = {
@@ -261,7 +256,6 @@ async def send_demo_message():
     await channel.send(embed=embed)
     print("Message de demonstration envoye.")
 
-
 @bot.event
 async def on_ready():
     print(f"Connecte en tant que {bot.user}")
@@ -271,7 +265,6 @@ async def on_ready():
         except Exception as exc:
             print(f"Erreur envoi message de demonstration: {exc}", file=sys.stderr)
     bot.loop.create_task(scanning_loop())
-
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
