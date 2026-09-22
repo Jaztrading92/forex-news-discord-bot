@@ -1,8 +1,6 @@
 name: FinancialJuice Discord Bot
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       send_demo:
