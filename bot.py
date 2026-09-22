@@ -145,31 +145,23 @@ def save_state(state):
         state = dict(list(state.items())[-2000:])
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def _impact_title(headline):
+    if headline["critical"]:
+        return "🆘 Alerte critique : impact majeur attendu sur les marches"
+    elif headline["active"]:
+        return "⚠️ Il est necessaire de connaitre le risque de marche"
+    else:
+        return "ℹ️ Actualite a suivre sur les marches"
+
+def _impact_color(headline):
+    if headline["critical"] or headline["active"]:
+        return RED_COLOR
+    return GREY_COLOR
+
 async def build_embed(headline):
     countries = detect_countries(headline["labels"])
-    flags = " ".join(MARKETS[c]["flag"] for c in countries if c in MARKETS) or "🌍"
-
-    if headline["critical"]:
-        level_label, icon, color = "Actualite critique", "🆘", RED_COLOR
-    elif headline["active"]:
-        level_label, icon, color = "Actualite importante", "🔴", RED_COLOR
-    else:
-        level_label, icon, color = "Actualite (non filtree - test)", "⚪", GREY_COLOR
 
     title_fr = await translate_to_fr(headline["title"])
-
-    embed = discord.Embed(
-        title=title_fr[:256] or "(sans titre)",
-        description=f"{icon} **{level_label}** {flags}",
-        color=color,
-        timestamp=datetime.now(timezone.utc),
-    )
-    if headline["link"]:
-        embed.url = headline["link"]
-
-    if headline["labels"]:
-        labels_fr = await asyncio.gather(*(translate_to_fr(label) for label in headline["labels"]))
-        embed.add_field(name="🏷️ Sujets", value=", ".join(labels_fr), inline=False)
 
     pairs, indices, other = set(), set(), set()
     for code in countries:
@@ -180,17 +172,24 @@ async def build_embed(headline):
         indices.update(info.get("indices", []))
         other.update(info.get("other", []))
 
-    market_lines = []
+    impact_groups = []
     if pairs:
-        market_lines.append("**Paires Forex :** " + ", ".join(sorted(pairs)))
+        impact_groups.append(", ".join(sorted(pairs)))
     if indices:
-        market_lines.append("**Indices :** " + ", ".join(sorted(indices)))
+        impact_groups.append(", ".join(sorted(indices)))
     if other:
-        market_lines.append("**Autres :** " + ", ".join(sorted(other)))
-    if market_lines:
-        embed.add_field(name="💱 Marches probablement concernes", value="\n".join(market_lines), inline=False)
+        impact_groups.append(", ".join(sorted(other)))
 
-    embed.set_footer(text=f"Source : FinancialJuice · {headline['time']}")
+    description = title_fr
+    if impact_groups:
+        description += "\n\n**Marches et actifs potentiellement concernes :** " + " · ".join(impact_groups) + "."
+
+    embed = discord.Embed(
+        title=_impact_title(headline),
+        description=description[:4096],
+        color=_impact_color(headline),
+        timestamp=datetime.now(timezone.utc),
+    )
     return embed
 
 intents = discord.Intents.default()
@@ -216,7 +215,7 @@ async def scanning_loop():
 
     start_time = time.monotonic()
     tick = 0
-    print("Boucle de scan demarree (actualites FinancialJuice, SANS FILTRAGE - mode test).")
+    print("Boucle de scan demarree (actualites, SANS FILTRAGE - mode test).")
 
     while time.monotonic() - start_time < MAX_RUNTIME_SECONDS:
         tick += 1
