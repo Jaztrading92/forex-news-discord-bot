@@ -2,8 +2,7 @@ name: Daily Economic Digest
 
 on:
   schedule:
-    - cron: "0 21 * * *"
-    - cron: "0 22 * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       force_send:
@@ -11,20 +10,37 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+
 jobs:
   digest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if it is 23h in Paris
+        id: check_time
+        run: |
+          HOUR=$(TZ=Europe/Paris date +%H)
+          echo "Heure actuelle a Paris: $HOUR"
+          if [ "${{ github.event.inputs.force_send }}" = "true" ] || [ "$HOUR" = "23" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.check_time.outputs.should_run == 'true'
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.check_time.outputs.should_run == 'true'
         run: pip install -r requirements-digest.txt
 
       - name: Cache Playwright browsers
+        if: steps.check_time.outputs.should_run == 'true'
         uses: actions/cache@v4
         id: playwright-cache
         with:
@@ -32,6 +48,7 @@ jobs:
           key: playwright-chromium-${{ hashFiles('requirements-digest.txt') }}
 
       - name: Install Playwright Chromium
+        if: steps.check_time.outputs.should_run == 'true'
         run: |
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
             python -m playwright install-deps chromium
@@ -40,8 +57,18 @@ jobs:
           fi
 
       - name: Run daily digest
+        if: steps.check_time.outputs.should_run == 'true'
         env:
           FOREXFACTORY_WEBHOOK_URL: ${{ secrets.FOREXFACTORY_WEBHOOK_URL }}
           FORCE_SEND: ${{ github.event.inputs.force_send }}
           SEND_DEMO_IF_EMPTY: ${{ github.event.inputs.force_send }}
         run: python daily_digest.py
+
+      - name: Commit dedup marker
+        if: steps.check_time.outputs.should_run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add digest_last_sent.txt
+          git diff --cached --quiet || git commit -m "chore: update digest dedup marker"
+          git push || true
