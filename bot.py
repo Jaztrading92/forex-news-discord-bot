@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import discord
+import requests
 from playwright.async_api import async_playwright
 
 URL = "https://www.financialjuice.com/"
@@ -101,6 +102,28 @@ EXTRACT_JS = """
 }
 """
 
+def _translate_sync(text):
+    if not text:
+        return text
+    try:
+        resp = requests.get(
+            "https://api.mymemory.translated.net/get",
+            params={"q": text[:490], "langpair": "en|fr"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        translated = data.get("responseData", {}).get("translatedText")
+        if translated and "MYMEMORY WARNING" not in translated.upper():
+            return translated
+    except Exception as exc:
+        print(f"Erreur traduction: {exc}", file=sys.stderr)
+    return text
+
+async def translate_to_fr(text):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _translate_sync, text)
+
 def detect_countries(labels):
     countries = []
     for label in labels:
@@ -122,7 +145,7 @@ def save_state(state):
         state = dict(list(state.items())[-2000:])
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def build_embed(headline):
+async def build_embed(headline):
     countries = detect_countries(headline["labels"])
     flags = " ".join(MARKETS[c]["flag"] for c in countries if c in MARKETS) or "🌍"
 
@@ -133,8 +156,10 @@ def build_embed(headline):
     else:
         level_label, icon, color = "Actualite (non filtree - test)", "⚪", GREY_COLOR
 
+    title_fr = await translate_to_fr(headline["title"])
+
     embed = discord.Embed(
-        title=headline["title"][:256] or "(sans titre)",
+        title=title_fr[:256] or "(sans titre)",
         description=f"{icon} **{level_label}** {flags}",
         color=color,
         timestamp=datetime.now(timezone.utc),
@@ -143,7 +168,8 @@ def build_embed(headline):
         embed.url = headline["link"]
 
     if headline["labels"]:
-        embed.add_field(name="🏷️ Sujets", value=", ".join(headline["labels"]), inline=False)
+        labels_fr = await asyncio.gather(*(translate_to_fr(label) for label in headline["labels"]))
+        embed.add_field(name="🏷️ Sujets", value=", ".join(labels_fr), inline=False)
 
     pairs, indices, other = set(), set(), set()
     for code in countries:
@@ -211,7 +237,7 @@ async def scanning_loop():
                 state[key] = True
                 save_state(state)
 
-                embed = build_embed(headline)
+                embed = await build_embed(headline)
                 await channel.send(embed=embed)
                 print(f"Envoye: {headline['title'][:80]}")
         except Exception as exc:
@@ -251,7 +277,7 @@ async def send_demo_message():
         "labels": ["USD", "United States", "Fed"],
         "link": None,
     }
-    embed = build_embed(demo_headline)
+    embed = await build_embed(demo_headline)
     embed.set_footer(text="Exemple de demonstration")
     await channel.send(embed=embed)
     print("Message de demonstration envoye.")
