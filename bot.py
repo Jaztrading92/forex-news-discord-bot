@@ -208,16 +208,50 @@ async def safe_wait_ready(page):
         pass
     await page.wait_for_timeout(4000)
 
+async def process_tick(page, channel, state, tick):
+    if tick % RELOAD_EVERY_N_TICKS == 0:
+        await page.reload(wait_until="domcontentloaded", timeout=45000)
+        await safe_wait_ready(page)
+        print("Page rechargee (rafraichissement periodique).")
+
+    headlines = await page.evaluate(EXTRACT_JS)
+    if tick % 15 == 0:
+        newest = headlines[0]["time"] if headlines else "?"
+        print(f"Battement (tick {tick}): {len(headlines)} actualites visibles, plus recente a {newest}.")
+
+    new_headlines = []
+    for headline in headlines:
+        if not headline["id"] or not headline["title"]:
+            continue
+        key = f"headline_{headline['id']}"
+        if key in state:
+            continue
+        state[key] = True
+        new_headlines.append(headline)
+
+    if new_headlines:
+        save_state(state)
+        # Le fil affiche les plus recentes en premier ; on les envoie dans l'ordre chronologique.
+        new_headlines.reverse()
+        embeds = await asyncio.gather(*(build_embed(h) for h in new_headlines))
+        for headline, embed in zip(new_headlines, embeds):
+            await channel.send(embed=embed)
+            print(f"Envoye: {headline['title'][:80]}")
+
+async def reconnect_browser(playwright_ctx):
+    browser = await playwright_ctx.chromium.launch()
+    page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
+    await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+    await safe_wait_ready(page)
+    return browser, page
+
 async def scanning_loop():
     await bot.wait_until_ready()
     channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
     state = load_state()
 
     playwright_ctx = await async_playwright().start()
-    browser = await playwright_ctx.chromium.launch()
-    page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
-    await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
-    await safe_wait_ready(page)
+    browser, page = await reconnect_browser(playwright_ctx)
 
     start_time = time.monotonic()
     tick = 0
@@ -226,46 +260,27 @@ async def scanning_loop():
     while time.monotonic() - start_time < MAX_RUNTIME_SECONDS:
         tick += 1
         try:
-            if tick % RELOAD_EVERY_N_TICKS == 0:
-                await page.reload(wait_until="domcontentloaded", timeout=45000)
-                await safe_wait_ready(page)
-                print("Page rechargee (rafraichissement periodique).")
-
-            headlines = await page.evaluate(EXTRACT_JS)
-            if tick % 15 == 0:
-                newest = headlines[0]["time"] if headlines else "?"
-                print(f"Battement: {len(headlines)} actualites visibles, plus recente a {newest}.")
-
-            new_headlines = []
-            for headline in headlines:
-                if not headline["id"] or not headline["title"]:
-                    continue
-                key = f"headline_{headline['id']}"
-                if key in state:
-                    continue
-                state[key] = True
-                new_headlines.append(headline)
-
-            if new_headlines:
-                save_state(state)
-                # Le fil affiche les plus recentes en premier ; on les envoie dans l'ordre chronologique.
-                new_headlines.reverse()
-                embeds = await asyncio.gather(*(build_embed(h) for h in new_headlines))
-                for headline, embed in zip(new_headlines, embeds):
-                    await channel.send(embed=embed)
-                    print(f"Envoye: {headline['title'][:80]}")
-        except Exception as exc:
-            print(f"Erreur boucle de scan: {exc}", file=sys.stderr)
+            await asyncio.wait_for(process_tick(page, channel, state, tick), timeout=60)
+        except asyncio.TimeoutError:
+            print(f"Erreur boucle de scan (tick {tick}): timeout de 60s depasse, relance du navigateur.", file=sys.stderr)
             try:
                 await browser.close()
             except Exception:
                 pass
             await asyncio.sleep(5)
             try:
-                browser = await playwright_ctx.chromium.launch()
-                page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
-                await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
-                await safe_wait_ready(page)
+                browser, page = await reconnect_browser(playwright_ctx)
+            except Exception as exc2:
+                print(f"Echec relance navigateur: {exc2}", file=sys.stderr)
+        except Exception as exc:
+            print(f"Erreur boucle de scan (tick {tick}): {exc}", file=sys.stderr)
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            await asyncio.sleep(5)
+            try:
+                browser, page = await reconnect_browser(playwright_ctx)
             except Exception as exc2:
                 print(f"Echec relance navigateur: {exc2}", file=sys.stderr)
 
