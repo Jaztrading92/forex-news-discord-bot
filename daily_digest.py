@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
@@ -10,6 +11,7 @@ from playwright.async_api import async_playwright
 URL = "https://www.forexfactory.com/calendar?day=today"
 WEBHOOK_URL = os.environ["FOREXFACTORY_WEBHOOK_URL"]
 PARIS = ZoneInfo("Europe/Paris")
+DEDUP_FILE = Path("digest_last_sent.txt")
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -153,11 +155,27 @@ def send_embed(embed):
     resp.raise_for_status()
 
 
+def already_sent_today(today_str):
+    if DEDUP_FILE.exists():
+        return DEDUP_FILE.read_text(encoding="utf-8").strip() == today_str
+    return False
+
+
+def mark_sent(today_str):
+    DEDUP_FILE.write_text(today_str, encoding="utf-8")
+
+
 async def main():
     now_paris = datetime.now(PARIS)
     force = os.environ.get("FORCE_SEND") == "true"
+    today_str = now_paris.strftime("%Y-%m-%d")
+
     if not force and now_paris.hour != 23:
         print(f"Heure actuelle a Paris: {now_paris.isoformat()} — pas encore 23h, on ne fait rien.")
+        return
+
+    if not force and already_sent_today(today_str):
+        print(f"Digest deja envoye aujourd'hui ({today_str}), on ne fait rien.")
         return
 
     date_fr = format_date_fr(now_paris)
@@ -182,11 +200,15 @@ async def main():
             send_embed(embed)
             print("Aucune annonce reelle aujourd'hui — exemple de demonstration envoye.")
             return
+        if not force:
+            mark_sent(today_str)
         print("Aucune annonce a fort impact aujourd'hui, rien a envoyer.")
         return
 
     embed = build_summary_embed(events, date_fr, "AUJOURD'HUI")
     send_embed(embed)
+    if not force:
+        mark_sent(today_str)
     print(f"{len(events)} annonce(s) a fort impact envoyee(s).")
 
 
