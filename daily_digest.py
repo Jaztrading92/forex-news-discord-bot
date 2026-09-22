@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import requests
 from playwright.async_api import async_playwright
 
-URL = "https://www.forexfactory.com/calendar?day=today"
+URL = "https://www.financialjuice.com/"
 WEBHOOK_URL = os.environ["FOREXFACTORY_WEBHOOK_URL"]
 PARIS = ZoneInfo("Europe/Paris")
 DEDUP_FILE = Path("digest_last_sent.txt")
@@ -38,42 +38,88 @@ ACRONYM_MAP = {
     "existing home sales": "EHS",
 }
 
-CURRENCY_INFO = {
-    "USD": {"flag": "🇺🇸"},
-    "EUR": {"flag": "🇪🇺"},
-    "GBP": {"flag": "🇬🇧"},
-    "JPY": {"flag": "🇯🇵"},
-    "CNY": {"flag": "🇨🇳"},
-    "AUD": {"flag": "🇦🇺"},
-    "NZD": {"flag": "🇳🇿"},
-    "CAD": {"flag": "🇨🇦"},
-    "CHF": {"flag": "🇨🇭"},
-    "SEK": {"flag": "🇸🇪"},
-    "NOK": {"flag": "🇳🇴"},
+MARKETS = {
+    "US": {"flag": "🇺🇸", "currency": "USD"},
+    "EU": {"flag": "🇪🇺", "currency": "EUR"},
+    "DE": {"flag": "🇩🇪", "currency": "EUR"},
+    "FR": {"flag": "🇫🇷", "currency": "EUR"},
+    "IT": {"flag": "🇮🇹", "currency": "EUR"},
+    "ES": {"flag": "🇪🇸", "currency": "EUR"},
+    "NL": {"flag": "🇳🇱", "currency": "EUR"},
+    "GB": {"flag": "🇬🇧", "currency": "GBP"},
+    "UK": {"flag": "🇬🇧", "currency": "GBP"},
+    "JP": {"flag": "🇯🇵", "currency": "JPY"},
+    "CN": {"flag": "🇨🇳", "currency": "CNY"},
+    "AU": {"flag": "🇦🇺", "currency": "AUD"},
+    "NZ": {"flag": "🇳🇿", "currency": "NZD"},
+    "CA": {"flag": "🇨🇦", "currency": "CAD"},
+    "CH": {"flag": "🇨🇭", "currency": "CHF"},
+    "SE": {"flag": "🇸🇪", "currency": "SEK"},
+    "NO": {"flag": "🇳🇴", "currency": "NOK"},
 }
+
+KEYWORD_COUNTRY = [
+    ("PBoC", "CN"), ("Chinese", "CN"), ("China", "CN"), ("Caixin", "CN"),
+    ("Fed's", "US"), ("Fed ", "US"), ("FOMC", "US"), ("US ", "US"), ("U.S.", "US"), ("Chicago", "US"), ("Richmond Fed", "US"), ("Redbook", "US"),
+    ("ECB", "EU"), ("Eurozone", "EU"), ("Euro Area", "EU"),
+    ("German", "DE"), ("Bund", "DE"), ("Bobl", "DE"), ("Schatz", "DE"), ("Ifo", "DE"), ("ZEW", "DE"), ("Bundesbank", "DE"),
+    ("French", "FR"), ("Banque de France", "FR"),
+    ("Italian", "IT"),
+    ("Spanish", "ES"),
+    ("Dutch", "NL"),
+    ("UK ", "GB"), ("British", "GB"), ("BoE", "GB"),
+    ("Japanese", "JP"), ("BoJ", "JP"), ("Tokyo", "JP"),
+    ("Australian", "AU"), ("RBA", "AU"),
+    ("New Zealand", "NZ"), ("RBNZ", "NZ"), ("Kiwi", "NZ"),
+    ("Canadian", "CA"), ("BoC", "CA"), ("Canada", "CA"),
+    ("Swiss", "CH"), ("SNB", "CH"),
+    ("Swedish", "SE"), ("Riksbank", "SE"),
+    ("Norwegian", "NO"),
+]
+
+HASH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+SUFFIX_RE = re.compile(r"([A-Z]{2})$")
 
 EXTRACT_JS = """
 () => {
-  const rows = Array.from(document.querySelectorAll('tr.calendar__row[data-event-id]'));
-  return rows.map(row => {
-    const icon = row.querySelector('.calendar__impact .icon');
-    const impactClass = icon ? icon.className : '';
-    const timeEl = row.querySelector('.calendar__time');
-    const currencyEl = row.querySelector('.calendar__currency span');
-    const titleEl = row.querySelector('.calendar__event-title');
-    const actualEl = row.querySelector('.calendar__actual span');
-    const forecastEl = row.querySelector('.calendar__forecast span');
-    const previousEl = row.querySelector('.calendar__previous span');
-    return {
-      impactClass,
-      time: timeEl ? timeEl.textContent.trim() : '-',
-      currency: currencyEl ? currencyEl.textContent.trim() : '?',
-      title: titleEl ? titleEl.textContent.trim() : '?',
+  const rows = Array.from(document.querySelectorAll('.div-table-row'));
+  const events = [];
+  let currentDate = null;
+  for (const row of rows) {
+    const dot = row.querySelector('.event-imp [class*="dot-"]');
+    const titleEl = row.querySelector('.event-title');
+    if (!dot || !titleEl) {
+      const txt = row.textContent.trim();
+      if (txt && !row.querySelector('.event-time') && txt.length < 30) {
+        currentDate = txt;
+      }
+      continue;
+    }
+    const dotClass = Array.from(dot.classList).find(c => c.startsWith('dot-'));
+    const impact = dotClass ? dotClass.split('-')[1] : null;
+    const timeEl = row.querySelector('.event-time');
+    const time = timeEl ? timeEl.textContent.trim() : '';
+    const title = titleEl.textContent.trim();
+    const dataRow = row.nextElementSibling;
+    if (!dataRow) continue;
+    const alertEl = dataRow.querySelector('[data-eventid]');
+    if (!alertEl) continue;
+    const id = alertEl.getAttribute('data-eventid');
+    const actualEl = dataRow.querySelector('.event-actual');
+    const forecastEl = dataRow.querySelector('.event-forcast');
+    const previousEl = dataRow.querySelector('.event-previous');
+    events.push({
+      id,
+      date: currentDate,
+      time,
+      title,
+      impact,
       actual: actualEl ? actualEl.textContent.trim() : null,
       forecast: forecastEl ? forecastEl.textContent.trim() : null,
       previous: previousEl ? previousEl.textContent.trim() : null,
-    };
-  });
+    });
+  }
+  return events;
 }
 """
 
@@ -90,83 +136,55 @@ def format_date_fr(dt):
     return f"{FR_DAYS[dt.weekday()]} {dt.day} {FR_MONTHS[dt.month - 1]}"
 
 
-def format_time_24h(time_str):
-    if not time_str:
-        return "-"
-    lowered = time_str.strip().lower()
-    if lowered in ("all day", "tentative", "-"):
-        return "Toute la journee" if lowered == "all day" else time_str
-    match = re.match(r"(\d{1,2}):(\d{2})(am|pm)", lowered)
-    if not match:
-        return time_str
-    hour, minute, meridiem = int(match.group(1)), match.group(2), match.group(3)
-    if meridiem == "pm" and hour != 12:
-        hour += 12
-    if meridiem == "am" and hour == 12:
-        hour = 0
-    return f"{hour:02d}:{minute}"
+def detect_country(event_id, title):
+    if not HASH_ID_RE.match(event_id):
+        m = SUFFIX_RE.search(event_id)
+        if m and m.group(1) in MARKETS:
+            return m.group(1)
+    for keyword, code in KEYWORD_COUNTRY:
+        if keyword in title:
+            return code
+    return None
 
 
 async def fetch_today_high_impact_events():
+    today_label = datetime.now(PARIS).strftime("%B") + " " + str(datetime.now(PARIS).day)
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        page = await browser.new_page(
-            user_agent=UA,
-            viewport={"width": 1366, "height": 900},
-            locale="en-US",
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Referer": "https://www.google.com/",
-            },
-        )
-        await page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
-
-        rows = []
-        for attempt in range(3):
-            response = await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
-            status = response.status if response else None
-            print(f"DEBUG: attempt {attempt + 1}: goto status = {status}")
-            if status == 403:
-                await page.wait_for_timeout(8000 * (attempt + 1))
-                continue
-            try:
-                await page.wait_for_selector("tr.calendar__row[data-event-id]", timeout=20000)
-            except Exception as exc:
-                print(f"DEBUG: wait_for_selector failed: {exc}")
-            rows = await page.evaluate(EXTRACT_JS)
-            if rows:
-                break
-            await page.wait_for_timeout(5000)
-
-        print(f"DEBUG: total rows found = {len(rows)}")
-        impact_counts = {}
-        for row in rows:
-            impact_counts[row["impactClass"]] = impact_counts.get(row["impactClass"], 0) + 1
-        print(f"DEBUG: impact class counts = {impact_counts}")
-        red_titles = [r["title"] for r in rows if "icon--ff-impact-red" in r["impactClass"]]
-        print(f"DEBUG: red event titles = {red_titles}")
+        browser = await p.chromium.launch()
+        page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
+        await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.wait_for_selector(".div-table-row .event-imp", timeout=25000)
+        except Exception as exc:
+            print(f"DEBUG: wait_for_selector failed: {exc}")
+        await page.wait_for_timeout(4000)
+        rows = await page.evaluate(EXTRACT_JS)
         await browser.close()
 
-    return [row for row in rows if "icon--ff-impact-red" in row["impactClass"]]
+    print(f"DEBUG: today_label = {today_label!r}, total rows = {len(rows)}")
+    today_rows = [r for r in rows if r["date"] == today_label]
+    print(f"DEBUG: rows matching today = {len(today_rows)}")
+    red_rows = [r for r in today_rows if r["impact"] == "1"]
+    print(f"DEBUG: red rows today = {[r['title'] for r in red_rows]}")
+    return red_rows
 
 
 def build_event_line(event, date_fr):
-    flag = CURRENCY_INFO.get(event["currency"], {}).get("flag", "🌍")
-    time_24h = format_time_24h(event["time"])
+    country = detect_country(event["id"], event["title"])
+    market_info = MARKETS.get(country)
+    flag = market_info["flag"] if market_info else "🌍"
+    currency = market_info["currency"] if market_info else "?"
+    time_24h = event["time"] or "-"
     title = apply_common_name(event["title"])
-    line = f"{flag} **{date_fr}** · **{time_24h}** · **{event['currency']}** · {title}"
+    line = f"{flag} **{date_fr}** · **{time_24h}** · **{currency}** · {title}"
 
     details = []
-    if event["actual"]:
+    if event["actual"] and event["actual"] != "-":
         details.append(f"Actuel **{event['actual']}**")
-    if event["forecast"]:
+    if event["forecast"] and event["forecast"] != "-":
         details.append(f"Prevision {event['forecast']}")
-    if event["previous"]:
+    if event["previous"] and event["previous"] != "-":
         details.append(f"Precedent {event['previous']}")
     if details:
         line += "\n> " + " · ".join(details)
@@ -214,12 +232,16 @@ async def main():
     date_fr = format_date_fr(now_paris)
 
     events = await fetch_today_high_impact_events()
+    # Ne garder que celles deja publiees (valeur actuelle disponible)
+    events = [e for e in events if e["actual"] and e["actual"] != "-"] + [
+        e for e in events if not (e["actual"] and e["actual"] != "-") and not e["forecast"] and not e["previous"]
+    ]
 
     if not events:
         if force and os.environ.get("SEND_DEMO_IF_EMPTY") == "true":
             demo_event = {
-                "time": "2:30pm",
-                "currency": "USD",
+                "id": "demoNFPUS",
+                "time": "14:30",
                 "title": "Non-Farm Payrolls",
                 "actual": "210K",
                 "forecast": "180K",
