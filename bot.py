@@ -223,6 +223,8 @@ async def process_tick(page, channel, state, tick):
     for headline in headlines:
         if not headline["id"] or not headline["title"]:
             continue
+        if not (headline["active"] or headline["critical"]):
+            continue
         key = f"headline_{headline['id']}"
         if key in state:
             continue
@@ -255,7 +257,7 @@ async def scanning_loop():
 
     start_time = time.monotonic()
     tick = 0
-    print("Boucle de scan demarree (actualites FinancialJuice, SANS FILTRAGE - mode test).")
+    print("Boucle de scan demarree (actualites FinancialJuice, filtrage actif : important/critique uniquement).")
 
     while time.monotonic() - start_time < MAX_RUNTIME_SECONDS:
         tick += 1
@@ -311,9 +313,26 @@ async def send_demo_message():
     await channel.send(embed=embed)
     print("Message de demonstration envoye.")
 
+async def clean_channel():
+    channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
+    deleted_total = 0
+    while True:
+        deleted = await channel.purge(limit=100)
+        deleted_total += len(deleted)
+        if len(deleted) < 100:
+            break
+    print(f"Nettoyage termine : {deleted_total} message(s) supprime(s).")
+
 @bot.event
 async def on_ready():
     print(f"Connecte en tant que {bot.user}")
+    if os.environ.get("CLEAN_CHANNEL") == "true":
+        try:
+            await clean_channel()
+        except Exception as exc:
+            print(f"Erreur nettoyage du salon: {exc}", file=sys.stderr)
+        await bot.close()
+        return
     if os.environ.get("SEND_DEMO") == "true":
         try:
             await send_demo_message()
