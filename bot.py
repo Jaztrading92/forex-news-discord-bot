@@ -182,13 +182,13 @@ async def build_embed(headline):
         assets_line = " · ".join(shown)
         if len(assets) > 6:
             assets_line += " …"
-        description += f"\n\n💹 **Actifs impactes :** {assets_line}"
+        description += f"\n\n💹 **Actifs pouvant etre impactes :** {assets_line}"
     if markets:
         shown = markets[:6]
         markets_line = " · ".join(shown)
         if len(markets) > 6:
             markets_line += " …"
-        description += f"\n📊 **Marches impactes :** {markets_line}"
+        description += f"\n📊 **Marches pouvant etre impactes :** {markets_line}"
 
     embed = discord.Embed(
         title=f"{flags}  {_impact_badge(headline)}",
