@@ -109,15 +109,40 @@ def format_time_24h(time_str):
 
 async def fetch_today_high_impact_events():
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
-        response = await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
-        print(f"DEBUG: goto status = {response.status if response else 'no response'}")
-        try:
-            await page.wait_for_selector("tr.calendar__row[data-event-id]", timeout=20000)
-        except Exception as exc:
-            print(f"DEBUG: wait_for_selector failed: {exc}")
-        rows = await page.evaluate(EXTRACT_JS)
+        browser = await p.chromium.launch(
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        page = await browser.new_page(
+            user_agent=UA,
+            viewport={"width": 1366, "height": 900},
+            locale="en-US",
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Referer": "https://www.google.com/",
+            },
+        )
+        await page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+
+        rows = []
+        for attempt in range(3):
+            response = await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+            status = response.status if response else None
+            print(f"DEBUG: attempt {attempt + 1}: goto status = {status}")
+            if status == 403:
+                await page.wait_for_timeout(8000 * (attempt + 1))
+                continue
+            try:
+                await page.wait_for_selector("tr.calendar__row[data-event-id]", timeout=20000)
+            except Exception as exc:
+                print(f"DEBUG: wait_for_selector failed: {exc}")
+            rows = await page.evaluate(EXTRACT_JS)
+            if rows:
+                break
+            await page.wait_for_timeout(5000)
+
         print(f"DEBUG: total rows found = {len(rows)}")
         impact_counts = {}
         for row in rows:
