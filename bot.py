@@ -109,7 +109,7 @@ def _translate_sync(text):
         resp = requests.get(
             "https://api.mymemory.translated.net/get",
             params={"q": text[:490], "langpair": "en|fr"},
-            timeout=8,
+            timeout=5,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -235,20 +235,25 @@ async def scanning_loop():
             if tick % 15 == 0:
                 newest = headlines[0]["time"] if headlines else "?"
                 print(f"Battement: {len(headlines)} actualites visibles, plus recente a {newest}.")
+
+            new_headlines = []
             for headline in headlines:
                 if not headline["id"] or not headline["title"]:
                     continue
-
                 key = f"headline_{headline['id']}"
                 if key in state:
                     continue
-
                 state[key] = True
-                save_state(state)
+                new_headlines.append(headline)
 
-                embed = await build_embed(headline)
-                await channel.send(embed=embed)
-                print(f"Envoye: {headline['title'][:80]}")
+            if new_headlines:
+                save_state(state)
+                # Le fil affiche les plus recentes en premier ; on les envoie dans l'ordre chronologique.
+                new_headlines.reverse()
+                embeds = await asyncio.gather(*(build_embed(h) for h in new_headlines))
+                for headline, embed in zip(new_headlines, embeds):
+                    await channel.send(embed=embed)
+                    print(f"Envoye: {headline['title'][:80]}")
         except Exception as exc:
             print(f"Erreur boucle de scan: {exc}", file=sys.stderr)
             try:
