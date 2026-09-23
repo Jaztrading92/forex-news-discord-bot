@@ -19,12 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check if it is between 21h and 23h59 in Paris
+      - name: Check if it is 23h (or catch-up until 4h) in Paris
         id: check_time
         run: |
           HOUR=$(TZ=Europe/Paris date +%H)
           echo "Heure actuelle a Paris: $HOUR"
-          if [ "${{ github.event.inputs.force_send }}" = "true" ] || { [ "$HOUR" -ge 21 ] && [ "$HOUR" -le 23 ]; }; then
+          if [ "${{ github.event.inputs.force_send }}" = "true" ] || [ "$HOUR" = "23" ] || { [ "$HOUR" -ge 0 ] && [ "$HOUR" -le 3 ]; }; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
