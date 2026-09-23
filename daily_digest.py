@@ -1,7 +1,7 @@
 import asyncio
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -130,8 +130,8 @@ def apply_common_name(title):
             return f"{title} ({acronym})"
     return title
 
-def format_date_fr(dt):
-    return f"{FR_DAYS[dt.weekday()]} {dt.day} {FR_MONTHS[dt.month - 1]}"
+def format_date_fr(d):
+    return f"{FR_DAYS[d.weekday()]} {d.day} {FR_MONTHS[d.month - 1]}"
 
 def detect_country(event_id, title):
     if not HASH_ID_RE.match(event_id):
@@ -143,8 +143,8 @@ def detect_country(event_id, title):
             return code
     return None
 
-async def fetch_today_high_impact_events():
-    today_label = datetime.now(PARIS).strftime("%B") + " " + str(datetime.now(PARIS).day)
+async def fetch_high_impact_events(target_date):
+    target_label = target_date.strftime("%B") + " " + str(target_date.day)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -158,11 +158,11 @@ async def fetch_today_high_impact_events():
         rows = await page.evaluate(EXTRACT_JS)
         await browser.close()
 
-    print(f"DEBUG: today_label = {today_label!r}, total rows = {len(rows)}")
-    today_rows = [r for r in rows if r["date"] == today_label]
-    print(f"DEBUG: rows matching today = {len(today_rows)}")
-    red_rows = [r for r in today_rows if r["impact"] == "1"]
-    print(f"DEBUG: red rows today = {[r['title'] for r in red_rows]}")
+    print(f"DEBUG: target_label = {target_label!r}, total rows = {len(rows)}")
+    target_rows = [r for r in rows if r["date"] == target_label]
+    print(f"DEBUG: rows matching target date = {len(target_rows)}")
+    red_rows = [r for r in target_rows if r["impact"] == "1"]
+    print(f"DEBUG: red rows for target date = {[r['title'] for r in red_rows]}")
     return red_rows
 
 def build_event_line(event, date_fr):
@@ -196,30 +196,38 @@ def send_embed(embed):
     resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
     resp.raise_for_status()
 
-def already_sent_today(today_str):
+def already_sent_today(date_str):
     if DEDUP_FILE.exists():
-        return DEDUP_FILE.read_text(encoding="utf-8").strip() == today_str
+        return DEDUP_FILE.read_text(encoding="utf-8").strip() == date_str
     return False
 
-def mark_sent(today_str):
-    DEDUP_FILE.write_text(today_str, encoding="utf-8")
+def mark_sent(date_str):
+    DEDUP_FILE.write_text(date_str, encoding="utf-8")
 
 async def main():
     now_paris = datetime.now(PARIS)
     force = os.environ.get("FORCE_SEND") == "true"
-    today_str = now_paris.strftime("%Y-%m-%d")
 
-    if not force and now_paris.hour not in (21, 22, 23):
-        print(f"Heure actuelle a Paris: {now_paris.isoformat()} — hors fenetre 21h-23h59, on ne fait rien.")
+    # Cible : 23h Paris. En cas de retard du declencheur GitHub, on rattrape
+    # jusqu'a 4h du matin en utilisant toujours la date d'hier (le jour vise).
+    if not force and now_paris.hour not in (23, 0, 1, 2, 3):
+        print(f"Heure actuelle a Paris: {now_paris.isoformat()} — hors fenetre 23h-03h59, on ne fait rien.")
         return
 
-    if not force and already_sent_today(today_str):
-        print(f"Digest deja envoye aujourd'hui ({today_str}), on ne fait rien.")
+    if force or now_paris.hour == 23:
+        target_date = now_paris.date()
+    else:
+        target_date = (now_paris - timedelta(days=1)).date()
+
+    target_str = target_date.isoformat()
+
+    if not force and already_sent_today(target_str):
+        print(f"Digest deja envoye pour {target_str}, on ne fait rien.")
         return
 
-    date_fr = format_date_fr(now_paris)
+    date_fr = format_date_fr(target_date)
 
-    events = await fetch_today_high_impact_events()
+    events = await fetch_high_impact_events(target_date)
     # Ne garder que celles qui ne sont pas encore sorties (annonce a venir)
     events = [e for e in events if not (e["actual"] and e["actual"] != "-")]
 
@@ -242,14 +250,14 @@ async def main():
             print("Aucune annonce a venir aujourd'hui — exemple de demonstration envoye.")
             return
         if not force:
-            mark_sent(today_str)
-        print("Aucune annonce a fort impact a venir aujourd'hui, rien a envoyer.")
+            mark_sent(target_str)
+        print("Aucune annonce a fort impact a venir, rien a envoyer.")
         return
 
     embed = build_summary_embed(events, date_fr, "AUJOURD'HUI")
     send_embed(embed)
     if not force:
-        mark_sent(today_str)
+        mark_sent(target_str)
     print(f"{len(events)} annonce(s) a fort impact a venir envoyee(s).")
 
 if __name__ == "__main__":
