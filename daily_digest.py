@@ -123,7 +123,6 @@ EXTRACT_JS = """
 }
 """
 
-
 def apply_common_name(title):
     lower = title.lower()
     for phrase, acronym in ACRONYM_MAP.items():
@@ -131,10 +130,8 @@ def apply_common_name(title):
             return f"{title} ({acronym})"
     return title
 
-
 def format_date_fr(dt):
     return f"{FR_DAYS[dt.weekday()]} {dt.day} {FR_MONTHS[dt.month - 1]}"
-
 
 def detect_country(event_id, title):
     if not HASH_ID_RE.match(event_id):
@@ -145,7 +142,6 @@ def detect_country(event_id, title):
         if keyword in title:
             return code
     return None
-
 
 async def fetch_today_high_impact_events():
     today_label = datetime.now(PARIS).strftime("%B") + " " + str(datetime.now(PARIS).day)
@@ -169,7 +165,6 @@ async def fetch_today_high_impact_events():
     print(f"DEBUG: red rows today = {[r['title'] for r in red_rows]}")
     return red_rows
 
-
 def build_event_line(event, date_fr):
     country = detect_country(event["id"], event["title"])
     market_info = MARKETS.get(country)
@@ -190,7 +185,6 @@ def build_event_line(event, date_fr):
         line += "\n> " + " · ".join(details)
     return line
 
-
 def build_summary_embed(events, date_fr, title_suffix):
     lines = [build_event_line(event, date_fr) for event in events]
     description = "🕐 Fuseau horaire : Europe/Paris\n\n" + "\n\n".join(lines)
@@ -200,29 +194,25 @@ def build_summary_embed(events, date_fr, title_suffix):
         "color": RED_COLOR,
     }
 
-
 def send_embed(embed):
     resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
     resp.raise_for_status()
-
 
 def already_sent_today(today_str):
     if DEDUP_FILE.exists():
         return DEDUP_FILE.read_text(encoding="utf-8").strip() == today_str
     return False
 
-
 def mark_sent(today_str):
     DEDUP_FILE.write_text(today_str, encoding="utf-8")
-
 
 async def main():
     now_paris = datetime.now(PARIS)
     force = os.environ.get("FORCE_SEND") == "true"
     today_str = now_paris.strftime("%Y-%m-%d")
 
-    if not force and now_paris.hour != 23:
-        print(f"Heure actuelle a Paris: {now_paris.isoformat()} — pas encore 23h, on ne fait rien.")
+    if not force and now_paris.hour not in (21, 22, 23):
+        print(f"Heure actuelle a Paris: {now_paris.isoformat()} — hors fenetre 21h-23h59, on ne fait rien.")
         return
 
     if not force and already_sent_today(today_str):
@@ -265,7 +255,6 @@ async def main():
     if not force:
         mark_sent(today_str)
     print(f"{len(events)} annonce(s) a fort impact envoyee(s).")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
