@@ -175,8 +175,6 @@ def build_event_line(event, date_fr):
     line = f"{flag} **{date_fr}** · **{time_24h}** · **{currency}** · {title}"
 
     details = []
-    if event["actual"] and event["actual"] != "-":
-        details.append(f"Actuel **{event['actual']}**")
     if event["forecast"] and event["forecast"] != "-":
         details.append(f"Prevision {event['forecast']}")
     if event["previous"] and event["previous"] != "-":
@@ -222,10 +220,8 @@ async def main():
     date_fr = format_date_fr(now_paris)
 
     events = await fetch_today_high_impact_events()
-    # Ne garder que celles deja publiees (valeur actuelle disponible)
-    events = [e for e in events if e["actual"] and e["actual"] != "-"] + [
-        e for e in events if not (e["actual"] and e["actual"] != "-") and not e["forecast"] and not e["previous"]
-    ]
+    # Ne garder que celles qui ne sont pas encore sorties (annonce a venir)
+    events = [e for e in events if not (e["actual"] and e["actual"] != "-")]
 
     if not events:
         if force and os.environ.get("SEND_DEMO_IF_EMPTY") == "true":
@@ -233,28 +229,28 @@ async def main():
                 "id": "demoNFPUS",
                 "time": "14:30",
                 "title": "Non-Farm Payrolls",
-                "actual": "210K",
+                "actual": None,
                 "forecast": "180K",
                 "previous": "175K",
             }
             embed = build_summary_embed([demo_event], date_fr, "AUJOURD'HUI (EXEMPLE)")
             embed["description"] = (
-                "Aucune annonce a fort impact reelle aujourd'hui — voici un exemple de rendu :\n\n"
+                "Aucune annonce a fort impact a venir aujourd'hui — voici un exemple de rendu :\n\n"
                 + embed["description"]
             )
             send_embed(embed)
-            print("Aucune annonce reelle aujourd'hui — exemple de demonstration envoye.")
+            print("Aucune annonce a venir aujourd'hui — exemple de demonstration envoye.")
             return
         if not force:
             mark_sent(today_str)
-        print("Aucune annonce a fort impact aujourd'hui, rien a envoyer.")
+        print("Aucune annonce a fort impact a venir aujourd'hui, rien a envoyer.")
         return
 
     embed = build_summary_embed(events, date_fr, "AUJOURD'HUI")
     send_embed(embed)
     if not force:
         mark_sent(today_str)
-    print(f"{len(events)} annonce(s) a fort impact envoyee(s).")
+    print(f"{len(events)} annonce(s) a fort impact a venir envoyee(s).")
 
 if __name__ == "__main__":
     asyncio.run(main())
