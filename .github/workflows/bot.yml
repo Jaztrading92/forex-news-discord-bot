@@ -22,42 +22,70 @@ concurrency:
 
 jobs:
   run-bot:
-    runs-on: ubuntu-latest
+    # Version figee : ubuntu-latest change de version sans prevenir.
+    runs-on: ubuntu-24.04
     timeout-minutes: 355
     env:
       PYTHONUNBUFFERED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ hashFiles('requirements.txt') }}
-
+      # Pas de cache : le navigateur installe correspond toujours a la version de Playwright.
       - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Verify browser launches
         run: |
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
-            python -m playwright install-deps chromium
-          else
-            python -m playwright install --with-deps chromium
-          fi
+          python - <<'EOF'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  await browser.close()
+
+          asyncio.run(main())
+          print("Navigateur Chromium OK")
+          EOF
 
       - name: Run bot (persistent ~5h30)
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_ALERT_CHANNEL_ID: ${{ secrets.DISCORD_ALERT_CHANNEL_ID }}
           SEND_DEMO: ${{ github.event.inputs.send_demo }}
           CLEAN_CHANNEL: ${{ github.event.inputs.clean_channel }}
-        run: timeout 20400 python -u bot.py || true
+        run: |
+          set +e
+          timeout 20400 python -u bot.py
+          code=$?
+          if [ "$code" -eq 124 ]; then
+            echo "Arret par timeout (normal)."
+            exit 0
+          fi
+          exit $code
+
+      - name: Alert Discord on failure
+        if: failure()
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_ALERT_CHANNEL_ID: ${{ secrets.DISCORD_ALERT_CHANNEL_ID }}
+        run: |
+          target="${DISCORD_ALERT_CHANNEL_ID:-$DISCORD_CHANNEL_ID}"
+          curl -sS -X POST \
+            -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://discord.com/api/v10/channels/${target}/messages" \
+            -d "{\"content\":\"⚠️ **Alerte bot** : echec du run GitHub (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Nouvel essai automatique dans 10 min.\"}" || true
 
       - name: Commit updated state
         if: always()
@@ -83,6 +111,10 @@ jobs:
       - name: Trigger next run
         if: always()
         run: |
+          # Apres un echec, on attend avant de relancer pour ne pas boucler en rafale.
+          if [ "${{ job.status }}" = "failure" ]; then
+            sleep 600
+          fi
           curl -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
