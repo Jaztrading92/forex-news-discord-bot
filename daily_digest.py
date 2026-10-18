@@ -1,264 +1,323 @@
-import asyncio
+"""Annonces economiques du lendemain (calendrier ForexFactory) publiees sur Discord a 23h (Paris).
+
+Pas de navigateur : le calendrier est un simple fichier JSON, on le telecharge avec requests.
+"""
+import json
 import os
 import re
+import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from playwright.async_api import async_playwright
 
-URL = "https://www.financialjuice.com/"
-WEBHOOK_URL = os.environ["FOREXFACTORY_WEBHOOK_URL"]
+CALENDAR_URLS = [
+    "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+    "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
+]
+WEBHOOK_URL = os.environ.get("FOREXFACTORY_WEBHOOK_URL", "")
 PARIS = ZoneInfo("Europe/Paris")
 DEDUP_FILE = Path("digest_last_sent.txt")
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+COLOR = 0xE0201B
+IMPACT_ICON = {"High": "🔴", "Medium": "🟠"}
 
-RED_COLOR = 0xE0201B
+FR_DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+FR_MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+             "septembre", "octobre", "novembre", "décembre"]
 
-FR_DAYS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
-FR_MONTHS = ["janv.", "fevr.", "mars", "avr.", "mai", "juin", "juil.", "aout", "sept.", "oct.", "nov.", "dec."]
-
-ACRONYM_MAP = {
-    "non-farm payrolls": "NFP",
-    "non farm payrolls": "NFP",
-    "nonfarm payrolls": "NFP",
-    "consumer price index": "CPI",
-    "producer price index": "PPI",
-    "gross domestic product": "GDP",
-    "purchasing managers index": "PMI",
-    "purchasing manager index": "PMI",
-    "federal open market committee": "FOMC",
-    "institute for supply management": "ISM",
-    "personal consumption expenditures": "PCE",
-    "existing home sales": "EHS",
+CURRENCY_FLAG = {
+    "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "JPY": "🇯🇵", "CAD": "🇨🇦", "AUD": "🇦🇺",
+    "NZD": "🇳🇿", "CHF": "🇨🇭", "CNY": "🇨🇳", "All": "🌍",
 }
 
-MARKETS = {
-    "US": {"flag": "🇺🇸", "currency": "USD"},
-    "EU": {"flag": "🇪🇺", "currency": "EUR"},
-    "DE": {"flag": "🇩🇪", "currency": "EUR"},
-    "FR": {"flag": "🇫🇷", "currency": "EUR"},
-    "IT": {"flag": "🇮🇹", "currency": "EUR"},
-    "ES": {"flag": "🇪🇸", "currency": "EUR"},
-    "NL": {"flag": "🇳🇱", "currency": "EUR"},
-    "GB": {"flag": "🇬🇧", "currency": "GBP"},
-    "UK": {"flag": "🇬🇧", "currency": "GBP"},
-    "JP": {"flag": "🇯🇵", "currency": "JPY"},
-    "CN": {"flag": "🇨🇳", "currency": "CNY"},
-    "AU": {"flag": "🇦🇺", "currency": "AUD"},
-    "NZ": {"flag": "🇳🇿", "currency": "NZD"},
-    "CA": {"flag": "🇨🇦", "currency": "CAD"},
-    "CH": {"flag": "🇨🇭", "currency": "CHF"},
-    "SE": {"flag": "🇸🇪", "currency": "SEK"},
-    "NO": {"flag": "🇳🇴", "currency": "NOK"},
+COUNTRY_PREFIX = {
+    "German": "Allemagne", "French": "France", "Spanish": "Espagne", "Italian": "Italie",
+    "Chinese": "Chine", "Japanese": "Japon",
 }
+STAGE = {"Flash": "flash", "Prelim": "préliminaire", "Final": "final", "Revised": "révisé", "Advance": "1re estimation"}
 
-KEYWORD_COUNTRY = [
-    ("PBoC", "CN"), ("Chinese", "CN"), ("China", "CN"), ("Caixin", "CN"),
-    ("Fed's", "US"), ("Fed ", "US"), ("FOMC", "US"), ("US ", "US"), ("U.S.", "US"), ("Chicago", "US"), ("Richmond Fed", "US"), ("Redbook", "US"),
-    ("ECB", "EU"), ("Eurozone", "EU"), ("Euro Area", "EU"),
-    ("German", "DE"), ("Bund", "DE"), ("Bobl", "DE"), ("Schatz", "DE"), ("Ifo", "DE"), ("ZEW", "DE"), ("Bundesbank", "DE"),
-    ("French", "FR"), ("Banque de France", "FR"),
-    ("Italian", "IT"),
-    ("Spanish", "ES"),
-    ("Dutch", "NL"),
-    ("UK ", "GB"), ("British", "GB"), ("BoE", "GB"),
-    ("Japanese", "JP"), ("BoJ", "JP"), ("Tokyo", "JP"),
-    ("Australian", "AU"), ("RBA", "AU"),
-    ("New Zealand", "NZ"), ("RBNZ", "NZ"), ("Kiwi", "NZ"),
-    ("Canadian", "CA"), ("BoC", "CA"), ("Canada", "CA"),
-    ("Swiss", "CH"), ("SNB", "CH"),
-    ("Swedish", "SE"), ("Riksbank", "SE"),
-    ("Norwegian", "NO"),
+# Du plus precis au plus general : la premiere regle qui correspond s'applique a ce morceau du titre.
+GLOSSARY = [
+    ("ADP Non-Farm Employment Change", "Emplois privés ADP"),
+    ("Non-Farm Employment Change", "Créations d'emplois non agricoles (NFP)"),
+    ("Unemployment Claims", "Inscriptions hebdomadaires au chômage"),
+    ("Unemployment Rate", "Taux de chômage"),
+    ("Unemployment Change", "Variation du chômage"),
+    ("Claimant Count Change", "Variation des demandeurs d'emploi"),
+    ("Employment Cost Index", "Indice du coût de l'emploi"),
+    ("Employment Change", "Variation de l'emploi"),
+    ("Average Hourly Earnings", "Salaire horaire moyen"),
+    ("Average Earnings Index", "Indice des salaires"),
+    ("Wage Price Index", "Indice des salaires"),
+    ("JOLTS Job Openings", "Offres d'emploi JOLTS"),
+    ("Core PCE Price Index", "Inflation PCE de base"),
+    ("PCE Price Index", "Inflation PCE"),
+    ("Core CPI", "Inflation de base (IPC)"),
+    ("Median CPI", "Inflation médiane (IPC)"),
+    ("Trimmed CPI", "Inflation tronquée (IPC)"),
+    ("Common CPI", "Inflation commune (IPC)"),
+    ("CPI", "Inflation (IPC)"),
+    ("Core PPI", "Prix à la production de base (IPP)"),
+    ("PPI", "Prix à la production (IPP)"),
+    ("Core Retail Sales", "Ventes au détail de base"),
+    ("Retail Sales", "Ventes au détail"),
+    ("GDP Price Index", "Indice des prix du PIB"),
+    ("GDP", "PIB (croissance)"),
+    ("ISM Manufacturing PMI", "ISM manufacturier"),
+    ("ISM Services PMI", "ISM des services"),
+    ("Manufacturing PMI", "PMI manufacturier"),
+    ("Services PMI", "PMI des services"),
+    ("Composite PMI", "PMI composite"),
+    ("Federal Funds Rate", "Décision de taux de la Fed"),
+    ("FOMC Statement", "Communiqué de la Fed (FOMC)"),
+    ("FOMC Press Conference", "Conférence de presse de la Fed (FOMC)"),
+    ("FOMC Meeting Minutes", "Compte rendu de la Fed (FOMC)"),
+    ("Main Refinancing Rate", "Décision de taux de la BCE"),
+    ("ECB Press Conference", "Conférence de presse de la BCE"),
+    ("Monetary Policy Statement", "Communiqué de politique monétaire"),
+    ("Monetary Policy Summary", "Résumé de politique monétaire"),
+    ("MPC Official Bank Rate Votes", "Votes du comité de la BoE"),
+    ("Official Bank Rate", "Décision de taux de la BoE"),
+    ("Official Cash Rate", "Décision de taux de la RBNZ"),
+    ("Cash Rate", "Décision de taux de la RBA"),
+    ("Overnight Rate", "Décision de taux de la BoC"),
+    ("BOJ Policy Rate", "Décision de taux de la BoJ"),
+    ("SNB Policy Rate", "Décision de taux de la BNS"),
+    ("Interest Rate Decision", "Décision de taux"),
+    ("Press Conference", "Conférence de presse"),
+    ("Trade Balance", "Balance commerciale"),
+    ("Current Account", "Balance courante"),
+    ("CB Consumer Confidence", "Confiance des consommateurs (Conference Board)"),
+    ("Consumer Confidence", "Confiance des consommateurs"),
+    ("UoM Consumer Sentiment", "Moral des ménages (Univ. Michigan)"),
+    ("UoM Inflation Expectations", "Anticipations d'inflation (Univ. Michigan)"),
+    ("Core Durable Goods Orders", "Commandes de biens durables de base"),
+    ("Durable Goods Orders", "Commandes de biens durables"),
+    ("Industrial Production", "Production industrielle"),
+    ("Building Permits", "Permis de construire"),
+    ("Housing Starts", "Mises en chantier"),
+    ("Existing Home Sales", "Ventes de logements anciens"),
+    ("New Home Sales", "Ventes de logements neufs"),
+    ("Pending Home Sales", "Promesses de ventes de logements"),
+    ("Crude Oil Inventories", "Stocks de pétrole brut"),
+    ("Natural Gas Storage", "Stocks de gaz naturel"),
+    ("Empire State Manufacturing Index", "Indice manufacturier Empire State"),
+    ("Philly Fed Manufacturing Index", "Indice manufacturier de la Fed de Philadelphie"),
+    ("Ifo Business Climate", "Climat des affaires Ifo"),
+    ("ZEW Economic Sentiment", "Sentiment économique ZEW"),
+    ("Tankan Manufacturing Index", "Indice Tankan manufacturier"),
+    ("Beige Book", "Livre beige de la Fed"),
+    ("Bank Holiday", "Jour férié"),
+    ("Fed Chair", "président de la Fed"),
+    ("ECB President", "présidente de la BCE"),
+    ("BOE Gov", "gouverneur de la BoE"),
+    ("BOJ Gov", "gouverneur de la BoJ"),
+    ("BOC Gov", "gouverneur de la BoC"),
+    ("RBA Gov", "gouverneure de la RBA"),
+    ("RBNZ Gov", "gouverneur de la RBNZ"),
+    ("SNB Chairman", "président de la BNS"),
+    ("FOMC Member", "membre de la Fed"),
+    ("MPC Member", "membre de la BoE"),
 ]
+GLOSSARY_RE = [(re.compile(r"\b" + re.escape(en) + r"\b"), fr) for en, fr in GLOSSARY]
+PERIOD_SUFFIX = {"m/m": "sur 1 mois", "q/q": "sur 1 trimestre", "y/y": "sur 1 an", "3m/y": "sur 3 mois / 1 an"}
 
-HASH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-SUFFIX_RE = re.compile(r"([A-Z]{2})$")
 
-EXTRACT_JS = """
-() => {
-  const rows = Array.from(document.querySelectorAll('.div-table-row'));
-  const events = [];
-  let currentDate = null;
-  for (const row of rows) {
-    const dot = row.querySelector('.event-imp [class*="dot-"]');
-    const titleEl = row.querySelector('.event-title');
-    if (!dot || !titleEl) {
-      const txt = row.textContent.trim();
-      if (txt && !row.querySelector('.event-time') && txt.length < 30) {
-        currentDate = txt;
-      }
-      continue;
-    }
-    const dotClass = Array.from(dot.classList).find(c => c.startsWith('dot-'));
-    const impact = dotClass ? dotClass.split('-')[1] : null;
-    const timeEl = row.querySelector('.event-time');
-    const time = timeEl ? timeEl.textContent.trim() : '';
-    const title = titleEl.textContent.trim();
-    const dataRow = row.nextElementSibling;
-    if (!dataRow) continue;
-    const alertEl = dataRow.querySelector('[data-eventid]');
-    if (!alertEl) continue;
-    const id = alertEl.getAttribute('data-eventid');
-    const actualEl = dataRow.querySelector('.event-actual');
-    const forecastEl = dataRow.querySelector('.event-forcast');
-    const previousEl = dataRow.querySelector('.event-previous');
-    events.push({
-      id,
-      date: currentDate,
-      time,
-      title,
-      impact,
-      actual: actualEl ? actualEl.textContent.trim() : null,
-      forecast: forecastEl ? forecastEl.textContent.trim() : null,
-      previous: previousEl ? previousEl.textContent.trim() : null,
-    });
-  }
-  return events;
-}
-"""
+def translate_online(text):
+    try:
+        resp = requests.get(
+            "https://api.mymemory.translated.net/get",
+            params={"q": text, "langpair": "en|fr"},
+            timeout=5,
+        )
+        translated = resp.json()["responseData"]["translatedText"]
+        if translated and "MYMEMORY" not in translated.upper():
+            return translated
+    except Exception as exc:
+        print(f"Traduction en ligne impossible pour {text!r}: {exc}", file=sys.stderr)
+    return text
 
-def apply_common_name(title):
-    lower = title.lower()
-    for phrase, acronym in ACRONYM_MAP.items():
-        if phrase in lower and acronym not in title:
-            return f"{title} ({acronym})"
-    return title
 
-def format_date_fr(d):
-    return f"{FR_DAYS[d.weekday()]} {d.day} {FR_MONTHS[d.month - 1]}"
+def translate_title(title):
+    core = title.strip()
+    country = ""
+    first, _, rest = core.partition(" ")
+    if first in COUNTRY_PREFIX and rest:
+        country, core = COUNTRY_PREFIX[first] + " – ", rest
 
-def detect_country(event_id, title):
-    if not HASH_ID_RE.match(event_id):
-        m = SUFFIX_RE.search(event_id)
-        if m and m.group(1) in MARKETS:
-            return m.group(1)
-    for keyword, code in KEYWORD_COUNTRY:
-        if keyword in title:
-            return code
-    return None
+    stage = ""
+    first, _, rest = core.partition(" ")
+    if first in STAGE and rest:
+        stage, core = f" ({STAGE[first]})", rest
 
-async def fetch_high_impact_events(target_date):
-    target_label = target_date.strftime("%B") + " " + str(target_date.day)
+    period = ""
+    for en, fr in PERIOD_SUFFIX.items():
+        if core.endswith(" " + en):
+            period, core = f" {fr}", core[: -len(en) - 1]
+            break
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page(user_agent=UA, viewport={"width": 1366, "height": 900})
-        await page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+    speech = core.endswith(" Speaks")
+    if speech:
+        core = core[: -len(" Speaks")]
+
+    matched = False
+    for pattern, fr in GLOSSARY_RE:
+        if pattern.search(core):
+            core = pattern.sub(fr, core, count=1)
+            matched = True
+            break
+    if not matched and not speech:
+        core = translate_online(core)
+
+    if speech:
+        core = f"Discours : {core}"
+    return f"{country}{core}{period}{stage}"
+
+
+def format_date_fr(day):
+    return f"{FR_DAYS[day.weekday()]} {day.day} {FR_MONTHS[day.month - 1]}"
+
+
+def fetch_json(url):
+    last_exc = None
+    for attempt in range(1, 4):
         try:
-            await page.wait_for_selector(".div-table-row .event-imp", timeout=25000)
+            resp = requests.get(url, headers={"User-Agent": UA}, timeout=20)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
         except Exception as exc:
-            print(f"DEBUG: wait_for_selector failed: {exc}")
-        await page.wait_for_timeout(4000)
-        rows = await page.evaluate(EXTRACT_JS)
-        await browser.close()
+            last_exc = exc
+            print(f"Echec telechargement calendrier (essai {attempt}/3) {url}: {exc}", file=sys.stderr)
+            time.sleep(15 * attempt)
+    raise RuntimeError(f"calendrier inaccessible : {last_exc}")
 
-    print(f"DEBUG: target_label = {target_label!r}, total rows = {len(rows)}")
-    target_rows = [r for r in rows if r["date"] == target_label]
-    print(f"DEBUG: rows matching target date = {len(target_rows)}")
-    red_rows = [r for r in target_rows if r["impact"] == "1"]
-    print(f"DEBUG: red rows for target date = {[r['title'] for r in red_rows]}")
-    return red_rows
 
-def build_event_line(event, date_fr):
-    country = detect_country(event["id"], event["title"])
-    market_info = MARKETS.get(country)
-    flag = market_info["flag"] if market_info else "🌍"
-    currency = market_info["currency"] if market_info else "?"
-    time_24h = event["time"] or "-"
-    title = apply_common_name(event["title"])
-    line = f"{flag} **{date_fr}** · **{time_24h}** · **{currency}** · {title}"
+def fetch_events(target_date):
+    """Annonces d'impact moyen/fort du jour `target_date` (heure de Paris), triees par heure."""
+    events = []
+    for url in CALENDAR_URLS:
+        data = fetch_json(url)
+        if not data:
+            continue
+        for item in data:
+            when = datetime.fromisoformat(item["date"]).astimezone(PARIS)
+            if when.date() == target_date and item.get("impact") in IMPACT_ICON:
+                events.append({**item, "when": when})
+        # La semaine en cours suffit si elle couvre deja le jour vise.
+        last_day = max(datetime.fromisoformat(i["date"]).astimezone(PARIS).date() for i in data)
+        if last_day >= target_date:
+            break
+    events.sort(key=lambda e: (e["when"], e["impact"] != "High"))
+    return events
 
-    details = []
-    if event["forecast"] and event["forecast"] != "-":
-        details.append(f"Prevision {event['forecast']}")
-    if event["previous"] and event["previous"] != "-":
-        details.append(f"Precedent {event['previous']}")
-    if details:
-        line += "\n> " + " · ".join(details)
-    return line
 
-def build_summary_embed(events, date_fr, title_suffix):
-    lines = [build_event_line(event, date_fr) for event in events]
-    description = "🕐 Fuseau horaire : Europe/Paris\n\n" + "\n\n".join(lines)
-    return {
-        "title": f"📅 ANNONCES ECONOMIQUES — {title_suffix}",
-        "description": description[:4096],
-        "color": RED_COLOR,
-    }
+def build_lines(events):
+    lines = []
+    for e in events:
+        flag = CURRENCY_FLAG.get(e["country"], "🌍")
+        line = f"{IMPACT_ICON[e['impact']]} **{e['when']:%H:%M}** {flag} **{e['country']}** — {translate_title(e['title'])}"
+        details = []
+        if e.get("forecast"):
+            details.append(f"Prévision : **{e['forecast']}**")
+        if e.get("previous"):
+            details.append(f"Précédent : {e['previous']}")
+        if details:
+            line += "\n> " + " · ".join(details)
+        lines.append(line)
+    return lines
 
-def send_embed(embed):
-    resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
-    resp.raise_for_status()
 
-def already_sent_today(date_str):
-    if DEDUP_FILE.exists():
-        return DEDUP_FILE.read_text(encoding="utf-8").strip() == date_str
-    return False
+def build_embeds(events, target_date):
+    header = f"🗓️ **{format_date_fr(target_date).capitalize()}** · heures de Paris\n\n"
+    chunks, current = [], header
+    for line in build_lines(events):
+        if len(current) + len(line) + 2 > 3900:
+            chunks.append(current)
+            current = ""
+        current += line + "\n\n"
+    chunks.append(current)
 
-def mark_sent(date_str):
-    DEDUP_FILE.write_text(date_str, encoding="utf-8")
+    embeds = []
+    for i, text in enumerate(chunks):
+        embed = {"description": text.strip(), "color": COLOR}
+        if i == 0:
+            embed["title"] = "📅 ANNONCES ÉCONOMIQUES DE DEMAIN"
+        if i == len(chunks) - 1:
+            embed["footer"] = {"text": "🔴 Fort impact · 🟠 Impact moyen · Restez prudents autour des annonces"}
+        embeds.append(embed)
+    return embeds
 
-async def main():
-    now_paris = datetime.now(PARIS)
+
+def send_embeds(embeds):
+    for start in range(0, len(embeds), 10):
+        payload = {"embeds": embeds[start:start + 10]}
+        for attempt in range(1, 4):
+            resp = requests.post(WEBHOOK_URL, json=payload, timeout=15)
+            if resp.status_code == 404:
+                raise RuntimeError("webhook Discord introuvable (supprime ?) : il faut en creer un nouveau.")
+            if resp.status_code == 429 or resp.status_code >= 500:
+                wait = float(resp.headers.get("Retry-After", 5 * attempt))
+                print(f"Discord occupe ({resp.status_code}), nouvel essai dans {wait}s.", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            raise RuntimeError("Discord refuse l'envoi apres 3 essais.")
+
+
+def already_sent(key):
+    return DEDUP_FILE.exists() and DEDUP_FILE.read_text(encoding="utf-8").strip() == key
+
+
+def mark_sent(key):
+    DEDUP_FILE.write_text(key, encoding="utf-8")
+
+
+def main():
+    now = datetime.now(PARIS)
     force = os.environ.get("FORCE_SEND") == "true"
 
-    # Cible : 23h Paris. En cas de retard du declencheur GitHub, on rattrape
-    # jusqu'a 4h du matin en utilisant toujours la date d'hier (le jour vise).
-    if not force and now_paris.hour not in (23, 0, 1, 2, 3):
-        print(f"Heure actuelle a Paris: {now_paris.isoformat()} — hors fenetre 23h-03h59, on ne fait rien.")
+    if not force and now.hour not in (23, 0, 1, 2, 3):
+        print(f"{now:%H:%M} a Paris : envoi prevu a 23h, rien a faire.")
         return
 
-    if force or now_paris.hour == 23:
-        target_date = now_paris.date()
-    else:
-        target_date = (now_paris - timedelta(days=1)).date()
+    # A 23h on annonce le lendemain ; entre 0h et 3h (rattrapage si GitHub a pris du retard)
+    # ce lendemain est deja "aujourd'hui".
+    target_date = now.date() + timedelta(days=1) if (force or now.hour == 23) else now.date()
+    key = target_date.isoformat()
 
-    target_str = target_date.isoformat()
-
-    if not force and already_sent_today(target_str):
-        print(f"Digest deja envoye pour {target_str}, on ne fait rien.")
+    if not force and already_sent(key):
+        print(f"Annonces du {key} deja envoyees.")
         return
 
-    date_fr = format_date_fr(target_date)
+    events = fetch_events(target_date)
+    print(f"{len(events)} annonce(s) d'impact moyen/fort le {key}.")
 
-    events = await fetch_high_impact_events(target_date)
-    # Ne garder que celles qui ne sont pas encore sorties (annonce a venir)
-    events = [e for e in events if not (e["actual"] and e["actual"] != "-")]
-
-    if not events:
-        if force and os.environ.get("SEND_DEMO_IF_EMPTY") == "true":
-            demo_event = {
-                "id": "demoNFPUS",
-                "time": "14:30",
-                "title": "Non-Farm Payrolls",
-                "actual": None,
-                "forecast": "180K",
-                "previous": "175K",
-            }
-            embed = build_summary_embed([demo_event], date_fr, "AUJOURD'HUI (EXEMPLE)")
-            embed["description"] = (
-                "Aucune annonce a fort impact a venir aujourd'hui — voici un exemple de rendu :\n\n"
-                + embed["description"]
-            )
-            send_embed(embed)
-            print("Aucune annonce a venir aujourd'hui — exemple de demonstration envoye.")
-            return
+    # Comme avant : on ne publie que s'il y a au moins une annonce a fort impact.
+    if not any(e["impact"] == "High" for e in events):
+        print("Aucune annonce a fort impact, rien a publier.")
         if not force:
-            mark_sent(target_str)
-        print("Aucune annonce a fort impact a venir, rien a envoyer.")
+            mark_sent(key)
         return
 
-    embed = build_summary_embed(events, date_fr, "AUJOURD'HUI")
-    send_embed(embed)
+    embeds = build_embeds(events, target_date)
+    if os.environ.get("DRY_RUN") == "true":
+        print("Mode test, rien n'est envoye. Message prevu :")
+        print(json.dumps(embeds, ensure_ascii=False, indent=2))
+        return
+
+    send_embeds(embeds)
     if not force:
-        mark_sent(target_str)
-    print(f"{len(events)} annonce(s) a fort impact a venir envoyee(s).")
+        mark_sent(key)
+    print(f"Annonces du {key} publiees.")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
