@@ -1,0 +1,27 @@
+name: Bot Watchdog
+
+# Filet de securite : si la chaine de relance du bot se casse, on le relance.
+# Ne fait rien tant qu'un run du bot est actif ou en attente.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Relance le bot s'il ne tourne pas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          active=$(gh run list --repo "${{ github.repository }}" --workflow bot.yml --limit 20 \
+            --json status --jq '[.[] | select(.status != "completed")] | length')
+          echo "Runs du bot actifs ou en attente : $active"
+          if [ "$active" = "0" ]; then
+            gh workflow run bot.yml --repo "${{ github.repository }}" --ref main
+            echo "Aucun run actif : bot relance par le watchdog."
+          fi
